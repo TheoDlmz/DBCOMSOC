@@ -84,7 +84,7 @@ class Graph:
 ###Algorithm for possible winner under plurality
 
 
-def votes2posiblewinner(votes,m):
+def votes2posiblewinnerB(votes,m):
     n = len(votes)
     matrixRank2 = []
     for i in range(n):
@@ -96,48 +96,124 @@ def votes2posiblewinner(votes,m):
                 seen[b] = 0
         matrixRank2.append(seen)
     return matrixRank2
-            
+
+def pwStep2(matrixRank2,m):
+    #pw2m = [2**i for i in range(m)]
+    dico = dict()
+    tab = []
+    numb = []
+    i = 0
+    for s in matrixRank2:
+        #v = 0
+        #for i in range(m):
+        #    v += pw2m*s[i]
+        if str(s) in dico.keys():
+            numb[dico[str(s)]] += 1
+        else:
+            numb.append(1)
+            tab.append(s)
+            dico[str(s)] = i
+            i+=1
+    return tab,numb
+        
     
-def build_matrix(score, M,m,c,query):
-    P1 = len(M)
+def build_matrixB(score,N,M,m,c,query):
+    P1 = len(N)
     if query == []:
         query = [1 for i in range(m)]
     size = P1 + m + 1
     matrix = np.zeros((size,size))
     for i in range(P1):
-        matrix[0,i+1] = 1
+        matrix[0,i+1] = N[i]
         matrix[i+1,1+P1:size-1] = M[i]
     for i in range(m-1):
         matrix[size-i-1,size-1] = score-query[i]
-    return matrix,size,P1
-    
+    return matrix,size
 
-def possibleWinner(possible,m,c,q=[]):
+def pretest(score,N,M,m,maxflow):
+    oth_score = np.array([0 for i in range(m-1)])
+    for i in range(len(M)):
+        oth_score += M[i]
+    argsorted = np.argsort(oth_score)
+    for i in range(len(argsorted)):
+        e = argsorted[i]
+        if oth_score[e] < 0:
+            return False
+        suppr = min(score-1,oth_score[e])
+        maxflow -= suppr
+        if maxflow <= 0:
+            print("yes",i,e,oth_score)
+            return True
+        else:
+            suppr_ok = 0
+            j = 0
+            while suppr_ok < suppr:
+                if M[j][e] > 0:
+                    oth_score = [oth_score[k] - min(M[j][k],suppr-suppr_ok) for k in range(m-1)]
+                    suppr_ok +=M[j][e]
+                j += 1
+    print(oth_score)
+    return False
+
+                    
+
+def possibleWinnerB(t,n,m,c,q=[]):
     
     M= []
     score = 0
-    for i in range(len(possible)):
-        if possible[i][c] == 1:
-            score += 1
+    N = []
+    maxwanted = 0
+    for i in range(len(n)):
+        if t[i][c] == 1:
+            score += n[i]
         else:
-            l = possible[i].copy()
+            l = t[i].copy()
             l.pop(c)
+            l = np.array(l)*n[i]
+            maxwanted += n[i]
+            N.append(n[i])
             M.append(l)
-    M,size,P1 = build_matrix(score,M,m,c,[])
+    if score>maxwanted:
+        return [c]
+    #if score >= maxwanted/10:
+     #   if pretest(score,N,M,m,maxwanted):
+      #      return [c]
+    M,size = build_matrixB(score,N,M,m,c,[])
     g = Graph(M)
     source = 0
     sink = size-1
     maxflow = g.FordFulkerson(source, sink)
-    if maxflow >= P1:
+    if maxflow >= maxwanted:
         return [c]
     else:
         return []
 
 
-def isTherePossibleWinner(votes,m):
-    possible = votes2posiblewinner(votes,m)
+def isTherePossibleWinnerB(votes,m):
+    possible = votes2posiblewinnerB(votes,m)
+    t,n = pwStep2(possible,m)
     set = []
     for c in range(m):
-        print(c)
-        set += possibleWinner(possible,m,c)
+        set += possibleWinnerB(t,n,m,c)
     print("The set of possible winner is ",set)
+    return set
+
+
+
+
+##Test
+
+
+
+def testPW(n,m,dataset):
+    print("START")
+    s1,s2=0,0
+    for i in range(10):
+        votes = read_dataset(dataset,n,m,i)
+        a = time.time()
+        nw = isTherePossibleWinnerB(votes,m)
+        b = time.time()
+        s2 += b-a
+        print(i,"(",(b-a),")")
+    print(m," x ",n," : ",s2/(10))
+    print("END")
