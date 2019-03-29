@@ -8,7 +8,7 @@ import maxflow as mf
 ###Algorithm for possible winner under plurality
 
 
-def votes2posiblewinnerB(votes,m):
+def listOfFirst(votes,m):
     n = len(votes)
     matrixRank2 = []
     for i in range(n):
@@ -21,16 +21,12 @@ def votes2posiblewinnerB(votes,m):
         matrixRank2.append(seen)
     return matrixRank2
 
-def pwStep2(matrixRank2,m):
-    #pw2m = [2**i for i in range(m)]
+def aggregate(matrixRank2,m):
     dico = dict()
     tab = []
     numb = []
     i = 0
     for s in matrixRank2:
-        #v = 0
-        #for i in range(m):
-        #    v += pw2m*s[i]
         if str(s) in dico.keys():
             numb[dico[str(s)]] += 1
         else:
@@ -41,7 +37,7 @@ def pwStep2(matrixRank2,m):
     return tab,numb
         
     
-def build_matrixB(g,score,N,M,m,c,query):
+def buildMatrix(g,score,N,M,m,c,query):
     P1 = len(N)
     if query == []:
         query = [1 for i in range(m)]
@@ -56,7 +52,7 @@ def build_matrixB(g,score,N,M,m,c,query):
         g.add_tedge(P1+i,0,score-query[i])
     return size
 
-def try_heuristic(score,N,M,m):
+def tryApprox(score,N,M,m):
     n = len(N)
     init = [score-1 for i in range(m-1)]
     for i in range(n):
@@ -78,8 +74,7 @@ def try_heuristic(score,N,M,m):
         
         
 
-def possibleWinnerB(t,n,m,c,q=[]):
-    print(c)
+def possibleWinner(t,n,m,c,q=[]):
     M= []
     score = 0
     N = []
@@ -95,29 +90,30 @@ def possibleWinnerB(t,n,m,c,q=[]):
             M.append(l)
     if score>maxwanted:
         return [c]
-
+    
     #ta = time.time()
-    if try_heuristic(score,N,M,m):
+    if tryApprox(score,N,M,m):
         return [c]
     #tb = time.time()
     g = mf.GraphInt()
-    size = build_matrixB(g,score,N,M,m,c,[])
+    size = buildMatrix(g,score,N,M,m,c,[])
     #tc = time.time()
     maxflow = g.maxflow()
     #td = time.time()
     #print(c,tb-ta,tc-tb,td-tc)
+    #print(c,score,maxflow,maxwanted)
     if maxflow >= maxwanted:
         return [c]
     else:
         return []
 
 
-def isTherePossibleWinnerB(votes,m):
-    possible = votes2posiblewinnerB(votes,m)
-    t,n = pwStep2(possible,m)
+def isTherePossibleWinner(votes,m):
+    possible = listOfFirst(votes,m)
+    t,n = aggregate(possible,m)
     set = []
     for c in range(m):
-        set += possibleWinnerB(t,n,m,c)
+        set += possibleWinner(t,n,m,c)
     print("The set of possible winner is ",set)
     return set
 
@@ -131,12 +127,13 @@ def isTherePossibleWinnerB(votes,m):
 def testPW(n,m,dataset):
     print("START")
     s1,s2=0,0
-    for i in range(10):
+    for i in range(20):
         votes = read_dataset(dataset,n,m,i)
         a = time.time()
-        nw = isTherePossibleWinnerB(votes,m)
+        nw = isTherePossibleWinner(votes,m)
         b = time.time()
         s2 += b-a
         print(i,"(",(b-a),")")
     print(m," x ",n," : ",s2/(10))
     print("END")
+    
