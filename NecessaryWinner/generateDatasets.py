@@ -1,3 +1,11 @@
+# Use this script to generate datasets :
+# preferences from Class SPLIT
+# preferences from Class LINEAR
+
+# TODO : Implement Other Class + Hybrid ?
+
+###
+
 import mallows
 
 def get_partial_order(m,k,complete_list): # Select k elem on an m list

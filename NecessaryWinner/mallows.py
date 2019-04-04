@@ -1,3 +1,8 @@
+# Code to create Mallows Models from Hayoue
+
+
+###
+
 import tools
 
 class Mallows(object):

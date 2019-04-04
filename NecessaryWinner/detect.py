@@ -1,3 +1,15 @@
+# These functions enable to detect the class of a profile of preferences :
+# 0 : Class SPLIT + MERGE
+# 1 : Class UNILINEAR
+# 2 : Class MULTILINEAR
+# 3 : Class MERGE
+# 4 : Class SPLIT
+
+# TODO : Return for each class the set of voters in this class. (Hybrid)
+
+
+###
+
 import tools
 
 
@@ -25,11 +37,11 @@ def detect_sub(Profile,m):
             elif top != 1:
                 c = False
     if c:
-        return 1,0 #one subranking
+        return 1,0 
     else:
-        return 2,0 #several subranking
+        return 2,0 
 
-def detect(Profile,m): #0 = general case, 1 = One subranking, 2 = Several subranking, 3 = Only merge, 4 = Only split
+def detect(Profile,m): 
     v,i = detect_sub(Profile,m)
     if v != 0:
         return v

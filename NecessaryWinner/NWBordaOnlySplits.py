@@ -59,18 +59,18 @@ def Step1_split(Profile,m):
     return sr,cl
     
 
-def Step3_borda_split(c,w,sr,cl,m,l=[]): #O(nm)
+def Step3_borda_split(c,w,sr,cl,m,l=[]): 
     n = len(sr)
     Sw = 0
     Sc = 0
-    for i in range(n): #n
+    for i in range(n): 
         (ssc,spc,dc) = sr[i][c]
         (ssw,spw,dw) = sr[i][w]
-        if (spc >= 0) and (spc < spw) and (ssw[0] in ssc): #O(|U[i,w]|)
-            block_size = spw - spc #O(1)
+        if (spc >= 0) and (spc < spw) and (ssw[0] in ssc): 
+            block_size = spw - spc 
             Sc += block_size
         else:
-            Sc += dc-1 #no->Dynamic programming to compute Down
+            Sc += dc-1 
             Sw += m-1-max(spw,0)
     if Sw == Sc:
         l.append(w)

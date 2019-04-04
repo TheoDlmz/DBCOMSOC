@@ -1,3 +1,7 @@
+# Use this implementation of Xia's algorithm if every voter's preference is in class UNILINEAR
+
+##
+
 import tools
 import step1
 
@@ -38,13 +42,13 @@ def Step1_sub(Profile,m):
     return sr,lup
     
 
-def Step3_borda_sub(c,w,sr,m,l=[]): #O(nm)
+def Step3_borda_sub(c,w,sr,m,l=[]): 
     n = len(sr)
     Sw = 0
     Sc = 0
-    for i in range(n): #n
-        if (sr[i][c] >= 0) and (sr[i][c] < sr[i][w]): #O(|U[i,w]|)
-            block_size = sr[i][w] - sr[i][c] #O(1)
+    for i in range(n): 
+        if (sr[i][c] >= 0) and (sr[i][c] < sr[i][w]): 
+            block_size = sr[i][w] - sr[i][c] 
             Sc += block_size
         else:
             if sr[i][c] != -1:
@@ -55,45 +59,48 @@ def Step3_borda_sub(c,w,sr,m,l=[]): #O(nm)
     return (Sw <= Sc)
    
 
-def Step2_borda_sub(c,sr,m): #O(nm²)
-    for w in range(m): #m
+def Step2_borda_sub(c,sr,m): 
+    for w in range(m):
         if c != w:
             if not(Step3_borda_sub(c,w,sr,m)):
                 return False
         return True
         
         
-def isThereNcW_borda_sub(Profile,m): #O(nm²)
+def isThereNcW_borda_sub(Profile,m): 
+    a = time.time()
     sr,lup = Step1_sub(Profile,m)
-    test = min(lup)
-    candPW = []
-    notPW = []
-    for j in range(m):
-        if lup[j] == test:
-            candPW.append(j)
+    b = time.time()
+    minlup = min(lup)
+    candNW = []
+    notNW = []
+    for i in range(m):
+        if lup[i] == minlup:
+            candNW.append(i)
         else:
-            notPW.append(j)
+            notNW.append(i)
     firstcand = len(notNW)
-    current = firstcand
     listcand = notNW + candNW
+    current = firstcand
     list_to_test = []
-    for w in range(firstcand,m): 
-        v = Step3_borda_sub(current,w,sr,m,list_to_test)
+    for w in range(firstcand+1,m): 
+        v = Step3_borda_sub(listcand[current],listcand[w],sr,m,list_to_test)
         if not(v):
             current = w
     i = 0
     for w in range(current):
         i+=1
-        v = Step3_borda_sub(current,w,sr,m)
+        v = Step3_borda_sub(listcand[current],listcand[w],sr,m)
         if not(v):
             break
     ncw = []
     if i == current:
-        ncw.append(current)
+        ncw.append(listcand[current])
     for w in list_to_test:
-        v = Step2_borda_sub(w,sr,m)
+        v = Step2_borda_sub(listcand[w],sr,m)
         if v:
-            ncw.append(w)
+            ncw.append(listcand[w])
+    c = time.time()
     if len(ncw) ==0:
-        return "There is no co-necessary winner"
-    return "The necessary co-winners are "+str(ncw)
+        return "There is no co-necessary winner",b-a,c-b
+    return "The necessary co-winners are "+str(ncw),b-a,c-b

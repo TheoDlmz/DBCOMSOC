@@ -1,11 +1,17 @@
+# Use this implementation of the algorithm if your data are in the class MULTILINEAR
+
+
+##
+
+
 import tools
 import step1
-
 
         
 def Step1_mulsub(Profile,m):
     sr = []
     cl = []
+    lup = [0 for i in range(m)]
     for i in range(len(Profile)):
         srv = [(-1,-1) for i in range(m)]
         clv = []
@@ -26,6 +32,7 @@ def Step1_mulsub(Profile,m):
                 j = tops[i]
                 while j != -1:
                     srv[j] = (i,current_rank)
+                    lup[j] += 1
                     current_rank +=1
                     if len(C[j]) == 0:
                         j = -1
@@ -38,7 +45,7 @@ def Step1_mulsub(Profile,m):
             srv = [(-1,-1) for i in range(m)]
             sr.append(srv)
             cl.append([])
-    return sr,cl
+    return sr,cl,lup
     
 
 def Step3_borda_mulsub(c,w,sr,cl,m,l=[]): #O(nm)
@@ -69,29 +76,41 @@ def Step2_borda_mulsub(c,sr,cl,m): #O(nm²)
         
         
 def isThereNcW_borda_mulsub(Profile,m): #O(nm²)
-    current = 0
-    sr,cl = Step1_mulsub(Profile,m)
+    a = time.time()
+    sr,cl,lup = Step1_mulsub(Profile,m)
+    b = time.time()
     list_to_test = []
-    for w in range(1,m): 
-        v = Step3_borda_mulsub(current,w,sr,cl,m,list_to_test)
+    minlup = min(lup)
+    candNW = []
+    notNW = []
+    for i in range(m):
+        if lup[i] == minlup:
+            candNW.append(i)
+        else:
+            notNW.append(i)
+    firstcand = len(notNW)
+    listcand = notNW + candNW
+    current = firstcand
+    for w in range(firstcand+1,m): 
+        v = Step3_borda_mulsub(listcand[current],listcand[w],sr,cl,m,list_to_test)
         if not(v):
             current = w
     i = 0
     for w in range(current):
         i+=1
-        v = Step3_borda_mulsub(current,w,sr,cl,m)
+        v = Step3_borda_mulsub(listcand[current],listcand[w],sr,cl,m)
         if not(v):
             break
     ncw = []
     if i == current:
-        ncw.append(current)
+        ncw.append(listcand[current])
     for w in list_to_test:
-        v = Step2_borda_mulsub(w,sr,cl,m)
+        v = Step2_borda_mulsub(listcand[w],sr,cl,m)
         if v:
-            ncw.append(w)
+            ncw.append(listcand[w])
+    c = time.time()
     if len(ncw) ==0:
-        return "There is no co-necessary winner"
-    return "The necessary co-winners are "+str(ncw)
-    
+        return "There is no co-necessary winner",b-a,c-b
+    return "The necessary co-winners are "+str(ncw),b-a,c-b
     
     
