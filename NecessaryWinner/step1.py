@@ -24,10 +24,12 @@ def Order2Up(P,m): #O(max(|P|,m)x|Up[u]) -> O(m²)
                 queue.append(e)
     return Up
     
-def Up2Down(Up,m): #m x |Up[u]| -> O(m²)
+def Up2Down(Up,m,ldown): #m x |Up[u]| -> O(m²)
     Down = [[] for i in range(m)]
+    
     for i in range(m):
         for j in Up[i]:
+            ldown[j] += 1
             Down[j].append(i)
     return Down
        
@@ -35,9 +37,10 @@ def Up2Down(Up,m): #m x |Up[u]| -> O(m²)
 def Step1(Profile,m): #O(nm²)
     D = []
     U = []
+    ldown = [0 for i in range(m)]
     for P in Profile: #n
         u = Order2Up(P,m)
         U.append(u)
-        d = Up2Down(u,m)
+        d = Up2Down(u,m,ldown)
         D.append(d)
-    return D,U
+    return D,U,ldown

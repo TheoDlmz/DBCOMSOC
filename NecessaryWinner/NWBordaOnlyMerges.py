@@ -79,7 +79,7 @@ def Step3_borda_merge(c,w,sr,cl,m,l=[]): #O(nm)
 def Step2_borda_merge(c,sr,cl,m): #O(nm²)
     for w in range(m): #m
         if c != w:
-            if not(Step3_borda_split(c,w,sr,cl,m)):
+            if not(Step3_borda_merge(c,w,sr,cl,m)):
                 return False
         return True
         

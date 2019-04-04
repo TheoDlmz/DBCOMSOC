@@ -20,7 +20,7 @@ def Step3_kApproval(k,c,w,U,D,m):
     
 def isThereNW_kApproval(k,Profile,m):
     current = 0
-    D,U = Step1(Profile,m)
+    D,U,_ = Step1(Profile,m)
     for w in range(1,m):
         v = Step3_kApproval(k,current,w,U,D,m)
         if not(v):

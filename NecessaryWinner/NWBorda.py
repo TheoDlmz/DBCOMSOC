@@ -41,28 +41,57 @@ def isThereNW_borda(Profile,m): #O(nm²)
     return "The necessary winner is "+str(current)
 
     
-    
 def isThereNcW_borda(Profile,m): #O(nm²)
     current = 0
-    D,U = Step1(Profile,m)
+    D,U,ldown = Step1(Profile,m)
+    jtest = 0
+    notfound = True
+    valmax = np.sum([i+1 for i in range(m)])*len(Profile)/m
+    notNW = []
+    candNW = []
+    max = 0
+    for jtest in range(m):
+        lowest_score = ldown[jtest]
+        if lowest_score >= valmax:
+            notfound = False
+            if lowest_score < max:
+                notNW.append(jtest)
+            elif lowest_score > max:
+                notNW += candNW
+                candNW = [jtest]
+                max = lowest_score
+            else:
+                candNW.append(jtest)
+        else:
+            notNW.append(jtest)
+    if notfound:
+        return "There is no co-necessary winner"
+    firstcand = len(notNW)
+    current = firstcand
+    listcand = notNW + candNW
     list_to_test = []
-    for w in range(1,m): 
-        v = Step3_borda(current,w,U,D,m,list_to_test)
+    for w in range(firstcand,m): 
+        v = Step3_borda(listcand[current],listcand[w],U,D,m,list_to_test)
         if not(v):
             current = w
     i = 0
     for w in range(current):
         i+=1
-        v = Step3_borda(current,w,U,D,m)
+        v = Step3_borda(listcand[current],listcand[w],U,D,m)
         if not(v):
             break
     ncw = []
     if i == current:
         ncw.append(current)
     for w in list_to_test:
-        v = Step2_borda(w,U,D,m)
+        v = Step2_borda(listcand[w],U,D,m)
         if v:
             ncw.append(w)
     if len(ncw) ==0:
         return "There is no co-necessary winner"
-    return "The necessary co-winners are "+str(ncw)
+    return "The necessary co-winners are "+str([listcand[w] for w in ncw])
+    
+    
+
+
+

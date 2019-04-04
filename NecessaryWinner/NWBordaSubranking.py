@@ -4,6 +4,7 @@ import step1
 
 def Step1_sub(Profile,m):
     sr = []
+    lup = [0 for i in range(m)]
     for i in range(len(Profile)):
         srv = [-1 for i in range(m)]
         if Profile[i] != []:
@@ -22,6 +23,7 @@ def Step1_sub(Profile,m):
                     i+=1
             while j != -1:
                 srv[j] = current_rank
+                lup[j] += current_rank
                 current_rank +=1
                 if len(C[j]) == 0:
                     j = -1
@@ -33,7 +35,7 @@ def Step1_sub(Profile,m):
             srv = [-1 for i in range(m)]
             srv.append(0)
             sr.append(srv)
-    return sr
+    return sr,lup
     
 
 def Step3_borda_sub(c,w,sr,m,l=[]): #O(nm)
@@ -62,10 +64,20 @@ def Step2_borda_sub(c,sr,m): #O(nm²)
         
         
 def isThereNcW_borda_sub(Profile,m): #O(nm²)
-    current = 0
-    sr = Step1_sub(Profile,m)
+    sr,lup = Step1_sub(Profile,m)
+    test = min(lup)
+    candPW = []
+    notPW = []
+    for j in range(m):
+        if lup[j] == test:
+            candPW.append(j)
+        else:
+            notPW.append(j)
+    firstcand = len(notNW)
+    current = firstcand
+    listcand = notNW + candNW
     list_to_test = []
-    for w in range(1,m): 
+    for w in range(firstcand,m): 
         v = Step3_borda_sub(current,w,sr,m,list_to_test)
         if not(v):
             current = w
