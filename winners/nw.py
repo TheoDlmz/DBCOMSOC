@@ -1137,7 +1137,7 @@ def updown_bucklin(Population,m,rule,verbose=False):
                     D.append(D_i)
     if verbose:
         print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
-    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],,lup
+    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],lup
 
 
 

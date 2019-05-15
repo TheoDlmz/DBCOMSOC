@@ -285,7 +285,6 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
             free_cand += 1
         score_c = rule[rank_c]
         given[c] = score_c
-        
         j_incr = j_incr-free_cand
         for j in range(len(free_list)):
             
@@ -331,7 +330,6 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
         for j in Up_c:
             if child_count[j] == 0:
                 orphan_up.append(j)
-                
         queue_down = orphan_down
         rank_down = rank_c+1
         while queue_down != []:
@@ -350,11 +348,11 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
                 danger_not_in = (queue_down[0] in danger)
                 for j in range(1,len(queue_down)):
                     w = queue_down[j]
-                    if (w not in danger) and not(danger_not_in):
+                    if (w not in danger) and (danger_not_in):
                         minqueue = score[w]
                         candmin = j
-                        danger_not_in = True
-                    elif score[w] < minqueue and ((w not in danger) or not(danger_not_in)):
+                        danger_not_in = False
+                    elif score[w] < minqueue and ((w not in danger) or danger_not_in):
                         minqueue = score[w]
                         candmin = j
             w_min = queue_down[candmin]
@@ -404,6 +402,8 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
                 if child_count[parents_w] == 0:
                     queue_up.append(parents_w)        
         score += given
+        # if danger != []:
+        #     print(given[danger[0]],given[c],len(D[new_index][danger[0]]),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c])
     maxscore = np.max(score)
     if score[c] == maxscore:
         return True,0
@@ -610,7 +610,7 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
 # 
 
 
-def approx_positional_scoring_rule(population,m,rule,shuffle=1,verbose=False):
+def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=False):
     M = nw.precompute_score(rule,m)
     lup = [0 for i in range(m)]
     U = []
@@ -696,3 +696,154 @@ def approx_borda(population,m,shuffle=1,verbose=False):
     
 def approx_kapproval(population,m,k,shuffle=1,verbose=False):
     return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),shuffle=shuffle,verbose=verbose)
+    
+    
+## Winner set
+
+
+
+def list_of_first_set(population,m):
+    n = len(population)
+    matrix_rank = []
+    for i in range(n):
+        roots = [1]*m
+        v = population[i]
+        for x in v:
+            (a,b) =x
+            if (roots[b]==1):
+                roots[b] = 0
+        matrix_rank.append(roots)
+    return matrix_rank
+
+def aggregate_set(matrix_rank,m):
+    dico = dict()
+    roots_list = []
+    roots_count = []
+    i = 0
+    for roots in matrix_rank:
+        if str(roots) in dico.keys():
+            roots_count[dico[str(roots)]] += 1
+        else:
+            roots_count.append(1)
+            roots_list.append(roots)
+            dico[str(roots)] = i
+            i+=1
+    return roots_list,roots_count
+        
+def score_set(dico,roots_list,roots_count,m,set_cand,n_voters):
+    cstr = str(sorted(set_cand))
+    if cstr in dico.keys():
+        score = dico[cstr]
+        return score
+    lenc = len(set_cand)
+    if lenc == 1:
+        dico[cstr] = n_voters
+        return n_voters
+    else:
+        for i in range(lenc):
+            cand_i = set_cand[i]
+            roots_list_i = []
+            roots_count_i = []
+            n_voters_i = 0
+            for j in range(len(roots_list)):
+                ok = True
+                k = 0
+                while k < lenc and ok:
+                    if set_cand[k] != cand_i and roots_list[j][set_cand[k]] == 1:
+                        ok = False
+                    k += 1
+                if not(ok):
+                    n_voters_i += roots_count[j]
+                    roots_list_i.append(roots_list[j])
+                    roots_count_i.append(roots_count[j])
+            set_i = set_cand.copy()
+            set_i.pop(i)
+            comp_n_voters_i = n_voters - n_voters_i
+            score_set_i = score_set(dico,roots_list_i,roots_count_i,m,set_i,n_voters_i)
+            if comp_n_voters_i >= score_set_i*(lenc-1):
+                dico[cstr] = score_set_i
+                return score_set_i
+            elif comp_n_voters_i + (n_voters_i-score_set_i) >= score_set_i:
+                g = mf.GraphInt()
+                g.add_nodes(len(roots_count)+lenc)
+                for j in range(len(roots_count)):
+                    g.add_tedge(j,roots_count[j],0)
+                    for k in range(lenc):
+                        if roots_list[j][set_cand[k]] == 1:
+                            g.add_edge(j,len(roots_count)+k,roots_count[j],0)
+                for k in range(lenc):
+                    g.add_tedge(len(roots_count)+k,0,score_set_i)
+                maxflow = g.maxflow()
+                if maxflow == score_set_i*lenc:
+                    dico[cstr] = score_set_i
+                    return score_set_i
+        g = mf.GraphInt()
+        g.add_nodes(len(roots_count)+lenc)
+        for j in range(len(roots_count)):
+            g.add_tedge(j,roots_count[j],0)
+            for k in range(lenc):
+                if roots_list[j][set_cand[k]] == 1:
+                    g.add_edge(j,len(roots_count)+k,roots_count[j],0)
+        for k in range(lenc):
+            g.add_tedge(len(roots_count)+k,0,n_voters//lenc)
+        maxflow = g.maxflow()
+        dico[cstr] = n_voters//lenc
+        return n_voters//lenc
+
+def build_matrix_set(g,score,roots_list,roots_count,m):
+    g.add_nodes(len(roots_count)+m)
+    for i in range(len(roots_count)):
+        g.add_tedge(i,roots_count[i],0)
+        for j in range(m):
+            if roots_list[i][j] == 1:
+                g.add_edge(i,len(roots_count)+j,roots_count[i],0)
+    for j in range(m):
+        g.add_tedge(len(roots_count)+j,0,score)
+            
+    
+
+def possibility_set(dico,roots_list,roots_count,m,set_cand,n_total):
+    n_set = 0
+    for i in range(len(roots_list)):
+        ok = False
+        for j in set_cand:
+            if roots_list[i][j] == 1:
+                ok = True
+                break
+        if ok:
+            n_set += roots_count[i]
+    score = score_set(dico,roots_list,roots_count,m,set_cand,n_set)
+    #verif
+    # gv = mf.GraphInt()
+    # gv.add_nodes(len(roots_count)+len(set_cand))
+    # for i in range(len(roots_count)):
+    #     gv.add_tedge(i,roots_count[i],0)
+    #     for k in range(len(set_cand)):
+    #         if roots_list[i][set_cand[k]] == 1:
+    #             gv.add_edge(i,len(roots_list)+k,roots_count[i],0)
+    # for k in range(len(set_cand)):
+    #     gv.add_tedge(len(roots_count)+k,0,score)
+    # maxflow = gv.maxflow()
+    # print("test",maxflow,score,score*len(set_cand))
+    
+    # if score*len(set_cand) >= (n_total - score): #This is false because maybe one of them cannot have less voters than score+1
+    #     return True
+    
+    if score*len(set_cand) < (n_total*len(set_cand))/m:
+        return False
+    g = mf.GraphInt()
+    maxwanted = build_matrix_set(g,score,roots_list,roots_count,m)
+    maxflow = g.maxflow()
+    if maxflow == n_total:
+        return True
+    else:
+        return False
+    
+def plurality_set(population,m,set_cand):
+    dico =dict()
+    n_total = len(population)
+    roots = list_of_first_set(population,m)
+    roots_list,roots_count = aggregate_set(roots,m)
+    return possibility_set(dico,roots_list,roots_count,m,set_cand,n_total)
+    
+    
