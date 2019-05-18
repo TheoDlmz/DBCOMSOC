@@ -1,7 +1,7 @@
 
 import numpy as np
 import maxflow as mf
-
+import random 
 
 ## Plurality
 
@@ -303,9 +303,10 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
                     j_incr -= place_needed
                 else:
                     Up_c.append(free_list[argscore_free[j]])
-        danger_child = set()
+        danger_child = [[] for i in range(m)]
         for dangerous_candidate in danger:
-            danger_child.update(D[new_index][dangerous_candidate])
+            for dangerous_child in D[new_index][dangerous_candidate]:
+                danger_child[dangerous_child].append(dangerous_candidate)
             
         parents = [[] for i in range(m)]
         child = [[] for i in range(m)]
@@ -379,18 +380,33 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
                 maxqueue = score[queue_up[0]]
                 candmax = 0
                 danger_in = (queue_up[0] in danger)
-                danger_down_in =(queue_up[0] in danger_child)
+                max_danger = len(danger_child[queue_up[0]])
+                maxqueue_danger = 0
+                for j in range(max_danger):
+                    maxqueue_danger += score[danger_child[queue_up[0]][j]]
+                    
                 for j in range(1,len(queue_up)):
                     w = queue_up[j]
                     if (not(danger_in) and (w in danger)):
                         maxqueue = score[w]
                         candmax = j
                         danger_in = True
-                    elif (not(danger_down_in) and (w in danger_child)):
+                    elif (len(danger_child[w]) > max_danger):
                         maxqueue = score[w]
                         candmax = j
-                        danger_down_in = True
-                    elif (score[w] > maxqueue and (w in danger or (not(danger_in) and (w in danger_child)) or (not(danger_in or danger_down_in)))):
+                        max_danger = len(danger_child[w])
+                        maxqueue_danger = 0
+                        for j2 in range(len(danger_child[w])):
+                            maxqueue_danger += score[danger_child[w][j2]]
+                    elif (len(danger_child[w]) > 0) and (len(danger_child) == max_danger):
+                        maxqueue_danger_w = 0
+                        for j2 in range(max_danger):
+                            maxqueue_danger_w += score[danger_child[w][j2]]
+                        if maxqueue_danger_w > maxqueue_danger:
+                            maxqueue = score[w]
+                            candmax = j
+                            maxqueue_danger = maxqueue_danger_w
+                    elif (score[w] > maxqueue and (w in danger or (not(danger_in) and  max_danger == 0))):
                         maxqueue = score[w]
                         candmax = j
             w_max = queue_up[candmax]
@@ -402,8 +418,8 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
                 if child_count[parents_w] == 0:
                     queue_up.append(parents_w)        
         score += given
-        # if danger != []:
-        #     print(given[danger[0]],given[c],len(D[new_index][danger[0]]),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c])
+        # if len(danger) == 2:
+        #     print(new_index,given[danger[0]],given[danger[1]],given[c],len(D[new_index][danger[0]]),len(D[new_index][danger[1]]),len(set(D[new_index][danger[0]]+D[new_index][danger[1]])),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c],danger[1] in U[new_index][c])
     maxscore = np.max(score)
     if score[c] == maxscore:
         return True,0
@@ -411,7 +427,152 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
         print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
         if len(danger) > 0:
             print("Were minimized : "+str(danger))
-    return False  ,np.argmax(score)        
+    return False  ,np.argmax(score) 
+    
+def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False):
+    n = len(U)
+    index_order = [i for i in range(n)]
+    np.random.shuffle(index_order)
+    score = np.zeros(m)
+    for i in range(n):
+        new_index = index_order[i]
+        given = [0 for i in range(m)]
+        
+        Up_c = []
+        Down_c = []
+        free_list = []
+        free_score = []
+        for j in range(m):
+            if j!=c:
+                if j in U[new_index][c]:
+                    Up_c.append(j)
+                elif j in D[new_index][c]:
+                    Down_c.append(j)
+                else:
+                    free_list.append(j)
+                    free_score.append(score[j])
+        argscore_free = np.argsort(free_score)
+        argscore_free = argscore_free[::-1]
+        j_incr = len(free_list)
+        for j in range(len(danger)):
+            w = danger[j]
+
+            if w not in Down_c and w in free_list:
+                place_needed = 0
+                for child_w in D[new_index][w]:
+                    if child_w not in Down_c and child_w != c:
+                        place_needed += 1
+                if j_incr -place_needed >=0 :
+                    for child_w in D[new_index][w]:
+                        if child_w not in Down_c and child_w != c:
+                            Down_c.append(child_w)
+                    j_incr -= place_needed
+        rank_c = len(U[new_index][c])-1
+        free_cand = 0
+        
+        while rank_c < (m-len(D[new_index][c])-(len(free_list)-j_incr)) and rule[rank_c] == rule[rank_c+1]:
+            rank_c += 1
+            free_cand += 1
+        score_c = rule[rank_c]
+        given[c] = score_c
+        j_incr = j_incr-free_cand
+        for j in range(len(free_list)):
+            
+            w = free_list[argscore_free[j]]
+            if j_incr == 0 and w not in Down_c:
+                Up_c.append(w)
+            elif w not in Down_c:
+                place_needed = 0
+                for child_w in D[new_index][w]:
+                    if child_w not in Down_c:
+                        place_needed += 1
+                if j_incr -place_needed >=0 :
+                    for child_w in D[new_index][w]:
+                        if child_w not in Down_c:
+                            Down_c.append(child_w)
+                    j_incr -= place_needed
+                else:
+                    Up_c.append(free_list[argscore_free[j]])
+        danger_child = [[] for i in range(m)]
+        for dangerous_candidate in danger:
+            for dangerous_child in D[new_index][dangerous_candidate]:
+                danger_child[dangerous_child].append(dangerous_candidate)
+            
+        parents = [[] for i in range(m)]
+        child = [[] for i in range(m)]
+        parents_count = [0 for i in range(m)]
+        child_count = [0 for i in range(m)]
+        for j in range(m):
+            if j in Up_c:
+                for elem in D[new_index][j]:
+                    if elem in Up_c and elem != j:
+                        parents[elem].append(j)
+                        child_count[j] += 1
+            elif j in Down_c:
+                for elem in U[new_index][j]:
+                    if elem in Down_c and elem != j:
+                        child[elem].append(j) 
+                        parents_count[j] += 1
+        orphan_down = []
+        for j in Down_c:
+            if parents_count[j] == 0:
+                orphan_down.append(j)
+        orphan_up = []
+        for j in Up_c:
+            if child_count[j] == 0:
+                orphan_up.append(j)
+        queue_down = orphan_down
+        rank_down = rank_c+1
+        minscore = np.min(score)
+        maxscore = np.max(score)
+        proba = [1/(score[j]-minscore+1) for j in range(m)]
+        while queue_down != []:
+            proba_i = [proba[j] for j in queue_down]
+            for cand_w in range(len(queue_down)):
+                if queue_down[cand_w] in danger:
+                    proba_i[cand_w] *= 0.00000001
+                proba_i[cand_w] /= max(len(danger_child[queue_down[cand_w]]),1)
+            candmin = random.choices([i for i in range(len(queue_down))],proba_i)[0]
+            w_min = queue_down[candmin]
+            queue_down.pop(candmin)
+            given[w_min] = rule[rank_down]
+            rank_down += 1
+            for child_w in child[w_min]:
+                parents_count[child_w] -= 1
+                if parents_count[child_w] == 0:
+                    queue_down.append(child_w)
+                    
+        queue_up = orphan_up
+        rank_up = rank_c-1
+        proba = [1/(maxscore+1-score[j]) for j in range(m)]
+        while queue_up != []:
+            proba_i = [proba[j] for j in queue_up]
+            for cand_w in range(len(queue_up)):
+                if queue_up[cand_w] in danger:
+                    proba_i[cand_w] += 1
+                proba_i[cand_w] += len(danger_child[queue_up[cand_w]])/m
+           # print(len(queue_up),len(proba_i))
+            candmax = random.choices([i for i in range(len(queue_up))],proba_i)[0]
+            w_max = queue_up[candmax]
+            queue_up.pop(candmax)
+            given[w_max] = rule[rank_up]
+            rank_up -= 1
+            for parents_w in parents[w_max]:
+                child_count[parents_w] -= 1
+                if child_count[parents_w] == 0:
+                    queue_up.append(parents_w)        
+        score += given
+        # if len(danger) == 2:
+        #     print(new_index,given[danger[0]],given[danger[1]],given[c],len(D[new_index][danger[0]]),len(D[new_index][danger[1]]),len(set(D[new_index][danger[0]]+D[new_index][danger[1]])),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c],danger[1] in U[new_index][c])
+    maxscore = np.max(score)
+    if score[c] == maxscore:
+        return True,0
+    if verbose:
+        print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
+        if len(danger) > 0:
+            print("Were minimized : "+str(danger))
+    return False  ,np.argmax(score)            
+    
 
 # def max_rank_approx(UD,m,c,rule,verbose=False):
 #     n = len(population)
@@ -608,9 +769,32 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
 #         print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
 #     return False
 # 
-
-
-def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=False):
+def s3_kapp_O_level_2(k,c_list,w,U,D,m): 
+    [c1,c2] = c_list
+    n = len(U)
+    score_w = 0
+    score_combl = 0
+    for i in range(n):
+        minpos_w = len(U[i][w])
+        maxpos_c1 = m-len(D[i][c1])+1
+        maxpos_c2 = m-len(D[i][c2])+1
+        maxpos_c12 = m-len(set(D[i][c1]+D[i][c2]))+  1
+        c1_in = c1 in U[i][w]
+        c2_in = c2 in U[i][w]
+        if c1_in or c2_in:
+            if minpos_w > k and maxpos_c1 > k and maxpos_c2 > k and maxpos_c12 <= k:
+                score_combl += 1
+        else:
+            if maxpos_c1 > k and maxpos_c2 > k and maxpos_c12 <= k:
+                score_combl += 1
+       # print(i,minpos_w,maxpos_c1,maxpos_c2,maxpos_c12,k)
+    return score_combl
+    
+    
+    
+def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False):
+    if type == 2:
+        kapp = int(np.sum(rule))
     M = nw.precompute_score(rule,m)
     lup = [0 for i in range(m)]
     U = []
@@ -640,6 +824,7 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=Fa
     arglup = np.argsort(lup)
     possible_winners = []
     for i in range(m):
+        matrix_score = np.ones(m)*np.inf
         w = arglup[i]
         max_w = maximum_score-lup[w]
         if max_w < (total_score-max_w)/(m-1): 
@@ -649,13 +834,34 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=Fa
             is_a_PW = True
             for c in possible_winners:
                 score_w,score_c = nw.s3_psr_O(rule,M,c,w,U,D,m)
+                matrix_score[c] = score_w-score_c
                 if verbose:
                     print("Test "+str(c)+" ("+str(score_c)+") against "+str(w)+" ("+str(score_w)+")")
                 if score_w < score_c:
                     is_a_PW = False
                     break
             if is_a_PW:
-                possible_winners.append(w)
+                cont = True
+                if len(possible_winners) > 2 and type == 2:
+                    arg_opponents = np.argsort(matrix_score)
+                    c_list = list(arg_opponents[:2])
+                    c2 = c_list[1]
+                    j = 2
+                    while matrix_score[arg_opponents[j]] == matrix_score[c2]:
+                        c_list.append(arg_opponents[j])
+                        j += 1
+                    for i_c_1 in range(len(c_list)):
+                        for i_c_2 in range(i_c_1+1,len(c_list)):
+                            c1 = c_list[i_c_1]
+                            c2 = c_list[i_c_2]
+                            score_to_combl = matrix_score[c1]+matrix_score[c2]
+                            score_combl = s3_kapp_O_level_2(kapp,[c1,c2],w,U,D,m)
+                            if verbose:
+                                print(str(w)+" vs "+" : "+str(c1)+","+str(c2)+" --> ("+str(score_combl)+"/"+str(score_to_combl)+")")
+                            if score_combl > score_to_combl:
+                                cont = False
+                if cont:
+                    possible_winners.append(w)
         
     if len(possible_winners) <= 2:
         return possible_winners, []
@@ -672,7 +878,10 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=Fa
                 for i in range(shuffle):
                     danger = []
                     while (verified == False):
-                        found_instance,winner = max_rank_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose)
+                        if heuristic == 0:
+                            found_instance,winner = max_rank_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose)
+                        else:
+                            found_instance,winner = random_choice_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose)
                         if found_instance:
                             verified = True
                             break
@@ -691,11 +900,11 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,verbose=Fa
             
 
 
-def approx_borda(population,m,shuffle=1,verbose=False):
-    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],shuffle=shuffle,verbose=verbose)
+def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False):
+    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose)
     
-def approx_kapproval(population,m,k,shuffle=1,verbose=False):
-    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),shuffle=shuffle,verbose=verbose)
+def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False):
+    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose)
     
     
 ## Winner set

@@ -3,7 +3,98 @@
 from typing import List, Tuple
 import numpy as np
 import random
+from random import choices
 
+
+def init_proba_rank(Pi,m):
+    M = np.zeros((m,m)) 
+    for i in range(m):
+        M[i][0] = Pi[0][i] 
+    mul = 1
+    mul_bis = 1
+    for j in range(m):
+        M[0][j] = mul*Pi[j][0]
+        M[m-1][j] = mul_bis*Pi[j][m-1-j]
+        mul_bis *= (1-Pi[j][m-1-j])
+        mul *= (1-Pi[j][0])
+    return M
+    
+def delete_first(M):
+    m = len(M)
+    M_new = np.zeros((m-1,m-1))
+    for i in range(m-1):
+        for j in range(m-1):
+            M_new[i][j] = M[i+1][j]
+    return M_new
+    
+def solve_proba_rank(Pi,m):
+    M = init_proba_rank(Pi,m)
+    if m == 1:
+        return M
+    else:
+        Pi_m_minus_1 = delete_first(Pi)
+        M_minus_1 = solve_proba_rank(Pi_m_minus_1,m-1)
+        for j in range(1,m):
+            for i in range(1,m-1):
+                M[i][j] = np.sum(Pi[0][:i])*M_minus_1[i-1,j-1] + np.sum(Pi[0][(i+1):])*M_minus_1[i,j-1]
+        return M #M[i][j] = proba that i go to rank j
+        
+        
+def solve_pairs(Pi,m):
+    if m == 2:
+        return [[0,Pi[0][0]],[Pi[0][1],0]]
+    else:
+        M =np.zeros((m,m))
+        Pi_m_minus_1 = delete_first(Pi)
+        M_minus_1 = solve_pairs(Pi_m_minus_1,m-1)
+       
+        for j in range(1,m):
+            M[0][j] = Pi[0][0] + np.sum(Pi[0][(1):j])*M_minus_1[0][j-1]
+            if j < m-1:
+                M[0][j] += np.sum(Pi[0][(j+1):])*M_minus_1[0][j]
+            for i in range(1,j):
+                if i < j:
+                    M[i][j] = Pi[0][i] + np.sum(Pi[0][:i])*M_minus_1[i-1][j-1] + np.sum(Pi[0][(i+1):j])*M_minus_1[i][j-1]
+                    if j < m-1:
+                        M[i][j] += np.sum(Pi[0][(j+1):])*M_minus_1[i][j]
+                elif i > j:
+                    M[i][j] = Pi[0][i] + np.sum(Pi[0][:j])*M_minus_1[i-1][j-1] + np.sum(Pi[0][(j+1):i])*M_minus_1[i-1][j] 
+                    if i < m-1:
+                        M[i][j] += np.sum(Pi[0][(i+1):])*M_minus_1[i][j]
+        for i in range(m):
+            for j in range(i+1,m):
+                M[j][i] = 1- M[i][j]
+        return M
+        
+        
+def solve_poset(Pi,m):
+    if m==2:
+        return [[[0,Pi[0][0]],[Pi[0][1],0]],[[0,0],[0,0]]]
+    else:
+        M = np.zeros((m,m,m))
+        Pi_m_minus_1 = delete_first(Pi)
+        M_minus_1 = solve_poset(Pi_m_minus_1,m-1)
+        #k = 0
+        for i in range(m):
+            for j in range(m):
+                if i !=j:
+                    M[0][i][j] = Pi[0][i]
+        for k in range(1,m):
+            for i in range(m):
+                for j in range(m):
+                    if i > j:
+                        M[k][i][j] = np.sum(Pi[0][j+1:i])*M_minus_1[k-1][i-1][j] 
+                        if j > 0:
+                            M[k][i][j] += np.sum(Pi[0][:j])*M_minus_1[k-1][i-1][j-1]
+                        if i < m -1 :
+                            M[k][i][j] += np.sum(Pi[0][i+1:])*M_minus_1[k-1][i][j]
+                    elif i < j:
+                        M[k][i][j] =  np.sum(Pi[0][i+1:j])*M_minus_1[k-1][i][j-1] 
+                        if i > 0:
+                            M[k][i][j] += np.sum(Pi[0][:i])*M_minus_1[k-1][i-1][j-1]
+                        if j < m -1 :
+                            M[k][i][j] += np.sum(Pi[0][j+1:])*M_minus_1[k-1][i][j]
+        return M
 
 class Mallows(object):
 
@@ -361,9 +452,31 @@ class RSM(object):
                 partial_order.append((i,c))
         return partial_order
         
+    def sample_pairs_with_TC(self) -> List:
+        children = [[] for i in range(self.m)]
+        I = [i for i in range(self.m)]
+        remaining_candidates = self.center.copy()
+
+        for step in range(self.m-1):
+            sample_index = choices(I[:self.m-step], weights=self.pi[step][:self.m-step])[0]
+            next_candidate = remaining_candidates.pop(sample_index)
+            for k in range(self.m-step-1):
+                c = remaining_candidates[k]
+                rand = np.random.rand()
+                if rand <= self.p[step]:
+                    children[next_candidate].append(c)
+        partial_order = []
+        for i in range(self.m):
+            for c in children[i]:
+                partial_order.append((i,c))
+        return partial_order
+        
     def sample_a_poset(self) -> Poset:
         return Poset(self.sample_pairs())
-    
+        
+    def sample_a_poset_with_TC(self) -> Poset:
+        return Poset(self.sample_pairs_with_TC())
+        
     def generate_a_population(self,n) -> List:
         pop = []
         for i in range(n):
@@ -402,7 +515,36 @@ class RSM(object):
         
     def set_random_p(self):
         self.p = [np.random.rand() for i in range(self.m)]
-    
+        
+    def proba_rank(self):
+        M = np.zeros((self.m,self.m))
+        M_proba = solve_proba_rank(self.pi,self.m)
+        for i in range(self.m):
+            for j in range(self.m):
+                M[r[i]][r[j]] = M_proba[i][j]
+        return M
+        
+    def proba_preference(self):
+        M = np.zeros((self.m,self.m))
+        M_proba = solve_pairs(self.pi,self.m)
+
+        for i in range(self.m):
+            for j in range(self.m):
+                M[r[i]][r[j]] = M_proba[i][j]
+        
+        return M
+        
+    def proba_pairs(self):
+        proba_brut = solve_poset(self.pi,self.m)
+        p = self.p
+        M = np.zeros((self.m,self.m))
+        for i in range(self.m):
+            for j in range(self.m):
+                sum = 0
+                for k in range(self.m):
+                    sum += proba_brut[k][i][j]*p[k]
+                M[r[i]][r[j]] = sum
+        return M
 
 class Mallows_RSM(RSM):
     def __init__(self,center:List,phi:float,p:List=[]):
