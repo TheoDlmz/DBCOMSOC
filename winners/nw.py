@@ -1,8 +1,7 @@
 
 import numpy as np
 import random
-from threading import Thread
-from queue import Queue
+from multiprocessing import Pool
 
 
 def intersect(a, b):
@@ -99,7 +98,7 @@ def s1_borda_M(C,roots,m,lup):
     return srv,clv
     
   
-def updown_borda(Population,m,verbose=False):
+def updown_borda(Population,m,verbose=False,optim_step1=True,optim_step2=True):
     lup = [0 for i in range(m)]
     sr_p = []
     rl_p = []
@@ -141,7 +140,11 @@ def updown_borda(Population,m,verbose=False):
                         roots.append(i)
                         if len(C[i])== 1:
                             top +=1
-            if top == bot and lin:
+            if not(optim_step1):
+                U_i = s1_borda_O(C,P,roots,m,lup)
+                U.append(U_i)
+                other.append(pairs)
+            elif top == bot and lin:
                 if top == 1:
                     sr_s_i = s1_borda_S(C,roots,m,lup)
                     sr_s.append(sr_s_i)
@@ -182,31 +185,43 @@ def updown_borda(Population,m,verbose=False):
                     U_i = s1_borda_O(C,P,roots,m,lup)
                     U.append(U_i)
                     other.append(pairs)
-    minlup = min(lup)
-    list_c = []
-    for i in range(m):
-        if lup[i] == minlup:
-            list_c.append(i)
-    lenc = len(list_c)
-    D = [[] for i in range(lenc)]
-    for P in other:
-        childs = [[] for i in range(m)]
-        for k in P: 
-            (n1,n2) = k
-            childs[n1].append(n2)
-        for j in range(lenc):
-            c = list_c[j]
-            visited = [False for i in range(m)]
-            Downc = [c]
-            queue = childs[c].copy()
-            while queue != []:
-                nc = queue.pop()
-                Downc.append(nc)
-                for cc in childs[nc]:
-                    if not(visited[cc]):
-                        visited[cc] = True
-                        queue.append(cc)
-            D[j].append(Downc)
+    if optim_step2:
+        minlup = min(lup)
+        list_c = []
+        for i in range(m):
+            if lup[i] == minlup:
+                list_c.append(i)
+        lenc = len(list_c)
+        D = [[] for i in range(lenc)]
+        for P in other:
+            childs = [[] for i in range(m)]
+            for k in P: 
+                (n1,n2) = k
+                childs[n1].append(n2)
+            for j in range(lenc):
+                c = list_c[j]
+                visited = [False for i in range(m)]
+                Downc = [c]
+                queue = childs[c].copy()
+                while queue != []:
+                    nc = queue.pop()
+                    Downc.append(nc)
+                    for cc in childs[nc]:
+                        if not(visited[cc]):
+                            visited[cc] = True
+                            queue.append(cc)
+                D[j].append(Downc)
+    else:
+        list_c = []
+        D = [[] for i in range(m)]
+        for i in range(len(U)):
+            U_i = U[i]
+            for j_1 in range(m):
+                D[j_1].append([])
+            for j_1 in range(m):
+                for j_2 in U_i[j_1]:
+                    D[j_2][i].append(j_1)
+                
     
     if verbose:
         print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
@@ -294,8 +309,130 @@ def s3_borda(c,w,UD,i,m,verbose=False):
     return score_c >= score_w
 
 
-def borda(Population,m,verbose=False):
-    UD,list_c,lup = updown_borda(Population,m,verbose=verbose)
+def borda(Population,m,verbose=False,optim_step1=True,optim_step2=True):
+    UD,list_c,lup = updown_borda(Population,m,verbose=verbose,optim_step1=optim_step1,optim_step2=optim_step2)
+    NW = []
+    if optim_step2:
+        order = np.argsort(lup)
+    else:
+        list_c = [i for i in range(m)]
+        order = [i for i in range(m)]
+    for i in range(len(list_c)):
+        isaNW = True
+        for j in range(m):
+            if list_c[i] != order[j]:
+                if not(s3_borda(list_c[i],order[j],UD,i,m,verbose=verbose)):
+                    isaNW = False
+                    break
+        if isaNW:
+            NW.append(list_c[i])
+    return NW
+
+## BORDA MultiThreading
+
+def s1_borda_O_MT(inputs):
+    (pairs,m) = inputs
+    P = [[] for i in range(m)]
+    C = [[] for i in range(m)]
+    for (a,b) in pairs:
+        P[b].append(a)
+        C[a].append(b)
+    lup = [0 for i in range(m)]
+    roots = []
+    for i in range(m):
+        if len(P[i]) == 0:
+            roots.append(i)
+    Up = [[i] for i in range(m)]
+    isMerge = (np.max([len(c) for c in C]) > 1)
+    isSplit = (np.max([len(p) for p in P]) > 1)
+    queue = roots.copy()
+    parents = [len(p) for p in P]
+    
+    if isSplit and isMerge:
+        while queue != []: 
+            u = queue.pop() 
+            Up[u] = list(set(Up[u])) 
+            lup[u] += len(Up[u])-1
+            for e in C[u]: 
+                Up[e].extend(Up[u]) 
+                parents[e] -= 1
+                if parents[e] == 0:
+                    queue.append(e)
+    else:
+        while queue != []: 
+            u = queue.pop() 
+            lup[u] = len(Up[u])-1
+            for e in C[u]: 
+                Up[e].extend(Up[u]) 
+                parents[e] -= 1
+                if parents[e] == 0:
+                    queue.append(e)
+    return Up,lup
+
+
+
+    
+  
+def updown_borda_MT(Population,m,verbose=False,process=1):
+    lup = [0 for i in range(m)]
+    U = []
+    sr_p = []
+    rl_p = []
+    sr_s = []
+    sr_m = []
+    cl_m = []
+    n = len(Population)
+    pairs_m = [(pair,m) for pair in Population]
+    if process == 0:
+        out = []
+        for i in range(n):
+            out.append(s1_borda_O_MT(pairs_m[i]))
+    else:
+        with Pool(process) as p:
+            out = p.map(s1_borda_O_MT,pairs_m)
+        
+    lup = [0 for i in range(m)]
+    for i in range(n):
+        lup_i = out[i][1]
+        U.append(out[i][0])
+        for j in range(m):
+            lup[j] += lup_i[j]
+    minlup = min(lup)
+    list_c = []
+    for i in range(m):
+        if lup[i] == minlup:
+            list_c.append(i)
+    lenc = len(list_c)
+    D = [[] for i in range(lenc)]
+    for P in Population:
+        childs = [[] for i in range(m)]
+        for k in P: 
+            (n1,n2) = k
+            childs[n1].append(n2)
+        for j in range(lenc):
+            c = list_c[j]
+            visited = [False for i in range(m)]
+            Downc = [c]
+            queue = childs[c].copy()
+            while queue != []:
+                nc = queue.pop()
+                Downc.append(nc)
+                for cc in childs[nc]:
+                    if not(visited[cc]):
+                        visited[cc] = True
+                        queue.append(cc)
+            D[j].append(Downc)
+    
+    if verbose:
+        print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
+    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
+
+
+
+
+
+def borda_MT(Population,m,verbose=False,process=1):
+    UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process)
     NW = []
     order = np.argsort(lup)
     for i in range(len(list_c)):
@@ -854,7 +991,7 @@ def updown_psr(Population,m,rule,verbose=False):
 
 
 
-def s3_psr_O(rule,M,c,w,U,D,m): 
+def s3_psr_O(rule,M,c,w,U,D,m,optim_prepross=True): 
     n = len(U)
     score_w = 0
     score_c = 0
@@ -863,15 +1000,21 @@ def s3_psr_O(rule,M,c,w,U,D,m):
             block_size = intersect(D[i][c],U[i][w])
             if block_size == 0:
                 print("wtf")
-           
-            score_c += M[max(len(U[i][c]),len(U[i][w])-block_size)-1,min(m-len(D[i][w]),m-len(D[i][c])+block_size)-1,block_size-1]
+            if optim_prepross:
+                score_c += M[max(len(U[i][c]),len(U[i][w])-block_size)-1,min(m-len(D[i][w]),m-len(D[i][c])+block_size)-1,block_size-1]
+            else:
+                minim = rule[len(U[i][c])-1] - rule[len(U[i][c])-1+block_size]
+                for i in range(len(U[i][c]),m-len(D[i][c])-block_size+1):
+                    if rule[i] - rule[i+block_size] < minim:
+                        minim = rule[i] - rule[i+block_size]
+                score_c += minim
         else:
             score_w += rule[len(U[i][w])-1]
             score_c += rule[m - len(D[i][c])]
 
     return score_w,score_c
     
-def s3_psr_P(rule,M,c,w,sr,ranks_l,m): 
+def s3_psr_P(rule,M,c,w,sr,ranks_l,m,optim_prepross=True): 
     n = len(sr)
     score_w = 0
     score_c = 0
@@ -889,7 +1032,7 @@ def s3_psr_P(rule,M,c,w,sr,ranks_l,m):
 
     return score_w,score_c
     
-def s3_psr_S(rule,M,c,w,sr,m): 
+def s3_psr_S(rule,M,c,w,sr,m,optim_prepross=True): 
     n = len(sr)
     score_w = 0
     score_c = 0
@@ -907,7 +1050,7 @@ def s3_psr_S(rule,M,c,w,sr,m):
     return score_w,score_c
     
 
-def s3_psr_M(rule,M,c,w,sr,cl,m): 
+def s3_psr_M(rule,M,c,w,sr,cl,m,optim_prepross=True): 
     n = len(sr)
     score_w = 0
     score_c = 0
@@ -925,15 +1068,15 @@ def s3_psr_M(rule,M,c,w,sr,cl,m):
                 score_c += rule[m - (cl[i][ssc]-spc)]
     return score_w,score_c
     
-def s3_psr(rule,M,c,w,UD,m,verbose=False):
+def s3_psr(rule,M,c,w,UD,m,verbose=False,optim_prepross=True):
     [U,D] = UD[0]
     [sr_p,rl_p] = UD[1]
     [sr_s] = UD[2]
     [sr_m,cl_m] = UD[3]
-    score_w_o,score_c_o = s3_psr_O(rule,M,c,w,U,D,m)
-    score_w_p,score_c_p = s3_psr_P(rule,M,c,w,sr_p,rl_p,m)
-    score_w_s,score_c_s = s3_psr_S(rule,M,c,w,sr_s,m)
-    score_w_m,score_c_m = s3_psr_M(rule,M,c,w,sr_m,cl_m,m)
+    score_w_o,score_c_o = s3_psr_O(rule,M,c,w,U,D,m,optim_prepross=optim_prepross)
+    score_w_p,score_c_p = s3_psr_P(rule,M,c,w,sr_p,rl_p,m,optim_prepross=optim_prepross)
+    score_w_s,score_c_s = s3_psr_S(rule,M,c,w,sr_s,m,optim_prepross=optim_prepross)
+    score_w_m,score_c_m = s3_psr_M(rule,M,c,w,sr_m,cl_m,m,optim_prepross=optim_prepross)
     score_w = score_w_o + score_w_p + score_w_s + score_w_m
     score_c = score_c_o + score_c_p + score_c_s + score_c_m
     if verbose:
@@ -941,17 +1084,19 @@ def s3_psr(rule,M,c,w,UD,m,verbose=False):
     return score_c >= score_w
 
 
-def positional_scoring_rule(Population,m,rule,verbose=False):
+def positional_scoring_rule(Population,m,rule,verbose=False,optim_prepross=True):
     UD,list_c,lup = updown_psr(Population,m,rule,verbose=verbose)
-    M = precompute_score(rule,m)
-   
+    if optim_prepross:
+        M = precompute_score(rule,m)
+    else:
+        M = []
     NW = []
     order = np.argsort(lup)
     for i in range(len(list_c)):
         isaNW = True
         for j in range(m):
             if list_c[i] != order[j]:
-                if not(s3_psr(rule,M,list_c[i],order[j],UD,m,verbose=verbose)):
+                if not(s3_psr(rule,M,list_c[i],order[j],UD,m,verbose=verbose,optim_prepross=optim_prepross)):
                     isaNW = False
                     break
         if isaNW:

@@ -842,7 +842,7 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                     break
             if is_a_PW:
                 cont = True
-                if len(possible_winners) > 2 and type == 2:
+                if len(possible_winners) > 1 and type==2:
                     arg_opponents = np.argsort(matrix_score)
                     c_list = list(arg_opponents[:2])
                     c2 = c_list[1]

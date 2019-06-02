@@ -176,8 +176,8 @@ class Poset(object):
         self.pairs = list(pairs)
         self.elements = self.get_elements()
         self.m = int(np.max(self.elements))+1
-        if self.is_there_cycle():
-            raise ValueError("This poset contains cycle")
+        #if self.is_there_cycle():
+         #   raise ValueError("This poset contains cycle")
 
     def get_elements(self) -> List:
         elements = []
