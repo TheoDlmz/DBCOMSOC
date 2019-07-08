@@ -2,7 +2,7 @@
 import numpy as np
 import random
 from multiprocessing import Pool
-
+import time
 
 def intersect(a, b):
     return len(list(set(a) & set(b))) - 1 
@@ -331,6 +331,7 @@ def borda(Population,m,verbose=False,optim_step1=True,optim_step2=True):
 ## BORDA MultiThreading
 
 def s1_borda_O_MT(inputs):
+    t_begin = time.time()
     (pairs,m) = inputs
     P = [[] for i in range(m)]
     C = [[] for i in range(m)]
@@ -367,7 +368,8 @@ def s1_borda_O_MT(inputs):
                 parents[e] -= 1
                 if parents[e] == 0:
                     queue.append(e)
-    return Up,lup
+    t_end = time.time()
+    return Up,lup,(t_end-t_begin)
 
 
 
@@ -385,18 +387,29 @@ def updown_borda_MT(Population,m,verbose=False,process=1):
     pairs_m = [(pair,m) for pair in Population]
     if process == 0:
         out = []
+        t_out_before = time.time()
+        t_in_before = time.time()
         for i in range(n):
             out.append(s1_borda_O_MT(pairs_m[i]))
+        t_in_after = time.time()
+        t_out_after = time.time()
     else:
+        t_out_before = time.time()
         with Pool(process) as p:
+            t_in_before = time.time()
             out = p.map(s1_borda_O_MT,pairs_m)
-        
+            t_in_after = time.time()
+        t_out_after = time.time()
     lup = [0 for i in range(m)]
+    sum_time = 0
     for i in range(n):
         lup_i = out[i][1]
         U.append(out[i][0])
+        sum_time += out[i][2]
         for j in range(m):
             lup[j] += lup_i[j]
+    if process != 0:
+        print((t_out_after-t_out_before),sum_time,(t_out_after-t_out_before)-sum_time/process)
     minlup = min(lup)
     list_c = []
     for i in range(m):
@@ -446,7 +459,125 @@ def borda_MT(Population,m,verbose=False,process=1):
             NW.append(list_c[i])
     return NW
     
- 
+## BORDA MultiThreading V1
+
+def s1_borda_O_MT2(inputs):
+    (pairs,m) = inputs
+    U = []
+    lup = [0 for i in range(m)]
+    for poset in pairs:
+        P = [[] for i in range(m)]
+        C = [[] for i in range(m)]
+        for (a,b) in poset:
+            P[b].append(a)
+            C[a].append(b)
+        roots = []
+        for i in range(m):
+            if len(P[i]) == 0:
+                roots.append(i)
+        Up = [[i] for i in range(m)]
+        isMerge = (np.max([len(c) for c in C]) > 1)
+        isSplit = (np.max([len(p) for p in P]) > 1)
+        queue = roots.copy()
+        parents = [len(p) for p in P]
+        if isSplit and isMerge:
+            while queue != []: 
+                u = queue.pop() 
+                Up[u] = list(set(Up[u])) 
+                lup[u] += len(Up[u])-1
+                for e in C[u]: 
+                    Up[e].extend(Up[u]) 
+                    parents[e] -= 1
+                    if parents[e] == 0:
+                        queue.append(e)
+        else:
+            while queue != []: 
+                u = queue.pop() 
+                lup[u] += len(Up[u])-1
+                for e in C[u]: 
+                    Up[e].extend(Up[u]) 
+                    parents[e] -= 1
+                    if parents[e] == 0:
+                        queue.append(e)
+        U.append(Up)
+    return U,lup
+
+
+
+    
+  
+def updown_borda_MT2(Population,m,verbose=False,process=1):
+    lup = [0 for i in range(m)]
+    U = []
+    sr_p = []
+    rl_p = []
+    sr_s = []
+    sr_m = []
+    cl_m = []
+    n = len(Population)
+    t1 = time.time()
+    if process == 0:
+        U,lup= s1_borda_O_MT2((Population,m))
+    else:
+        pairs = [(Population[(n*i)//process:(n*(i+1))//process],m) for i in range(process)]
+        with Pool(process) as p:
+            out = p.map(s1_borda_O_MT2,pairs)
+        t2 = time.time()
+        print(t2-t1)
+        for i in range(process):
+            lup_i = out[i][1]
+            U.extend(out[i][0])
+            for j in range(m):
+                lup[j] += lup_i[j]
+    minlup = min(lup)
+    list_c = []
+    for i in range(m):
+        if lup[i] == minlup:
+            list_c.append(i)
+    lenc = len(list_c)
+    D = [[] for i in range(lenc)]
+    for P in Population:
+        childs = [[] for i in range(m)]
+        for k in P: 
+            (n1,n2) = k
+            childs[n1].append(n2)
+        for j in range(lenc):
+            c = list_c[j]
+            visited = [False for i in range(m)]
+            Downc = [c]
+            queue = childs[c].copy()
+            while queue != []:
+                nc = queue.pop()
+                Downc.append(nc)
+                for cc in childs[nc]:
+                    if not(visited[cc]):
+                        visited[cc] = True
+                        queue.append(cc)
+            D[j].append(Downc)
+    
+    if verbose:
+        print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
+    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
+
+
+
+
+
+def borda_MT2(Population,m,verbose=False,process=1):
+    UD,list_c,lup = updown_borda_MT2(Population,m,verbose=verbose,process=process)
+    NW = []
+    order = np.argsort(lup)
+    for i in range(len(list_c)):
+        isaNW = True
+        for j in range(m):
+            if list_c[i] != order[j]:
+                if not(s3_borda(list_c[i],order[j],UD,i,m,verbose=verbose)):
+                    isaNW = False
+                    break
+        if isaNW:
+            NW.append(list_c[i])
+    return NW
+    
  ## K-APPROVAL
  
  

@@ -2,6 +2,8 @@
 import numpy as np
 import maxflow as mf
 import random 
+import time
+from gurobipy import *
 
 ## Plurality
 
@@ -33,7 +35,7 @@ def aggregate_plurality(roots_list,m):
     return tab_roots,count_roots
         
     
-def build_graph_plurality(graph,score_c,count_roots,roots_list,m,c):
+def build_graph_plurality(graph,score_c,count_roots,roots_list,m,c,blocked=[]):
     P1 = len(count_roots)
     size = P1 + m - 1
     nodes = graph.add_nodes(size)
@@ -43,12 +45,20 @@ def build_graph_plurality(graph,score_c,count_roots,roots_list,m,c):
             if roots_list[i][j] >0:
                 graph.add_edge(i,P1+j,count_roots[i],0)
     for i in range(m-1):
-        graph.add_tedge(P1+i,0,score_c)
+        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
+            graph.add_tedge(P1+i,0,score_c-1)
+        else:
+            graph.add_tedge(P1+i,0,score_c)
     return size
 
-def try_approx_plurality(score_c,count_roots,roots_list,m):
+def try_approx_plurality(score_c,c,count_roots,roots_list,m,blocked=[]):
     n = len(count_roots)
     init = [score_c for i in range(m-1)]
+    for cand in blocked:
+        if cand <c :
+            init[cand] -= 1
+        elif cand > c:
+            init[cand-1] -= 1
     for i in range(n):
         score_tab = list(np.argsort(init))
         score_tab.reverse()
@@ -66,7 +76,7 @@ def try_approx_plurality(score_c,count_roots,roots_list,m):
         
         
 
-def possible_winner_plurality(roots_list,count_roots,m,c,verbose=False):
+def possible_winner_plurality(roots_list,count_roots,m,c,verbose=False,blocked=[]):
     roots_list_without_c = []
     score_c = 0
     count_roots_without_c = []
@@ -88,12 +98,12 @@ def possible_winner_plurality(roots_list,count_roots,m,c,verbose=False):
         if verbose:
             print(str(c)+" : Default loser ("+str(score_c)+")")
         return False
-    if try_approx_plurality(score_c,count_roots_without_c,roots_list_without_c,m):
+    if try_approx_plurality(score_c,c,count_roots_without_c,roots_list_without_c,m,blocked=blocked):
         if verbose:
             print(str(c)+" : Winner with approx")
         return True
     graph = mf.GraphInt()
-    size = build_graph_plurality(graph,score_c,count_roots_without_c,roots_list_without_c,m,c)
+    size = build_graph_plurality(graph,score_c,count_roots_without_c,roots_list_without_c,m,c,blocked=blocked)
     maxflow = graph.maxflow()
     if maxflow >= maxflow_wanted:
         if verbose:
@@ -147,7 +157,7 @@ def aggregate_veto(leaves_list,m):
     return tab_leaves,count_leaves
         
     
-def build_graph_veto(graph,zero_c,count_leaves,leaves_list,m,c):
+def build_graph_veto(graph,zero_c,count_leaves,leaves_list,m,c,blocked=[]):
     P1 = len(count_leaves)
     size = P1 + m - 1
     nodes = graph.add_nodes(size)
@@ -157,12 +167,20 @@ def build_graph_veto(graph,zero_c,count_leaves,leaves_list,m,c):
             if leaves_list[i][j] >0:
                 graph.add_edge(i,P1+j,count_leaves[i],0)
     for i in range(m-1):
-        graph.add_tedge(P1+i,0,zero_c)
+        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
+            graph.add_tedge(P1+i,0,zero_c+1)
+        else:
+            graph.add_tedge(P1+i,0,zero_c)
     return size
 
-def try_approx_veto(zero_c,count_leaves,leaves_list,m):
+def try_approx_veto(zero_c,c,count_leaves,leaves_list,m,blocked=[]):
     n = len(count_leaves)
     init = [zero_c for i in range(m-1)]
+    for cand in blocked:
+        if cand < c:
+            init[cand] += 1
+        else:
+            init[cand-1] += 1
     for i in range(n):
         score_tab = list(np.argsort(init))
         score_tab.reverse()
@@ -183,7 +201,7 @@ def try_approx_veto(zero_c,count_leaves,leaves_list,m):
         
         
 
-def possible_winner_veto(leaves_list,count_leaves,m,c,n,verbose=False):
+def possible_winner_veto(leaves_list,count_leaves,m,c,n,verbose=False,blocked=[]):
     leaves_list_without_c = []
     zero_c = 0
     count_leaves_without_c = []
@@ -197,20 +215,16 @@ def possible_winner_veto(leaves_list,count_leaves,m,c,n,verbose=False):
             count_leaves_without_c.append(count_leaves[i])
             leaves_list_without_c.append(l)
     maxflow_wanted = zero_c*(m-1)
-    if zero_c < (n-zero_c)/(m-1):
-        if verbose:
-            print(str(c)+" : Default winner ("+str(zero_c)+")")
-        return True
     if zero_c > n/2:
         if verbose:
             print(str(c)+" : Default loser ("+str(zero_c)+")")
         return False
-    if try_approx_veto(zero_c,count_leaves_without_c,leaves_list_without_c,m):
+    if try_approx_veto(zero_c,c,count_leaves_without_c,leaves_list_without_c,m,blocked=blocked):
         if verbose:
             print(str(c)+" : Winner with approx")
         return True
     graph = mf.GraphInt()
-    size = build_graph_veto(graph,zero_c,count_leaves_without_c,leaves_list_without_c,m,c)
+    size = build_graph_veto(graph,zero_c,count_leaves_without_c,leaves_list_without_c,m,c,blocked=blocked)
     maxflow = graph.maxflow()
     if maxflow >= maxflow_wanted:
         if verbose:
@@ -231,7 +245,77 @@ def veto(population,m,verbose=False):
             winners.append(c)
     return winners
     
+##pw partitioned
+
+def poset2partitioned(poset,m):
+    childs = [[] for i in range(m)]
+    is_roots = [1]*m
+    for (a,b) in poset:
+        childs[a].append(b)
+        is_roots[b] = 0
+    roots = []
+    for i in range(m):
+        if is_roots[i] == 1:
+            roots.append(i)
     
+    current_rank = 0
+    queue = roots.copy()
+    partitioned = []
+    while queue != []:
+        partitioned.append(queue)
+        c0 = queue[0]
+        queue = childs[c0].copy()
+    return partitioned
+    
+
+def remaining_cand(partitioned,k,scores,m):
+    seen = len(partitioned[0])
+    j = 0
+    while seen <= k:
+        for cand in partitioned[j]:
+            scores[cand] += 1
+        j +=1
+        seen += len(partitioned[j])
+    n_remaining = len(partitioned[j])-(seen-k)
+    return n_remaining,partitioned[j]
+    
+def kapp_partitioned_cand(c,graphs_info,min_scores,m):
+    n = len(graphs_info)
+    graph = mf.GraphInt()
+    graph.add_nodes(n+m)
+    score_c = min_scores[c]
+    total_needed = 0
+    for i in range(n):
+        n_remaining,set_remaining = graphs_info[i]
+        if c in set_remaining and n_remaining>0:
+            score_c += 1
+            n_remaining -= 1
+        total_needed += n_remaining
+        graph.add_tedge(i,n_remaining,0)
+        for cand in set_remaining:
+            if cand != c:
+                graph.add_edge(i,n+cand,1,0)
+    for cand in range(m):
+        if cand != c:
+            graph.add_tedge(n+cand,0,score_c-min_scores[cand])
+    maxflow = graph.maxflow()
+    return maxflow == total_needed
+    
+
+
+def kapp_partitioned(P,m,k,list=[]):
+    min_scores = [0]*m
+    graphs_info = []
+    for poset in P:
+        partitioned = poset2partitioned(poset,m)
+        graphs_info.append(remaining_cand(partitioned,k,min_scores,m))
+    pw = []
+    if list == []:
+        list = [i for i in range(m)]
+    for cand in list:
+        if kapp_partitioned_cand(cand,graphs_info,min_scores,m):
+            pw.append(cand)
+    return pw
 
 ## Approx borda
 
@@ -239,7 +323,7 @@ from . import nw
 
 ##
 
-def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
+def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
     n = len(U)
     index_order = [i for i in range(n)]
     np.random.shuffle(index_order)
@@ -422,14 +506,21 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False):
         #     print(new_index,given[danger[0]],given[danger[1]],given[c],len(D[new_index][danger[0]]),len(D[new_index][danger[1]]),len(set(D[new_index][danger[0]]+D[new_index][danger[1]])),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c],danger[1] in U[new_index][c])
     maxscore = np.max(score)
     if score[c] == maxscore:
-        return True,0
+        for cand_blocked in blocked:
+            if score[cand_blocked] == maxscore:
+                return False,cand_blocked
+        count_max = 0
+        for i in range(m):
+            if score[i] == maxscore:
+                count_max += 1
+        return True,count_max
     if verbose:
         print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
         if len(danger) > 0:
             print("Were minimized : "+str(danger))
     return False  ,np.argmax(score) 
     
-def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False):
+def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
     n = len(U)
     index_order = [i for i in range(n)]
     np.random.shuffle(index_order)
@@ -566,7 +657,14 @@ def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False):
         #     print(new_index,given[danger[0]],given[danger[1]],given[c],len(D[new_index][danger[0]]),len(D[new_index][danger[1]]),len(set(D[new_index][danger[0]]+D[new_index][danger[1]])),len(U[new_index][danger[0]]),len(U[new_index][c]),danger[0] in U[new_index][c],danger[1] in U[new_index][c])
     maxscore = np.max(score)
     if score[c] == maxscore:
-        return True,0
+        for cand_blocked in blocked:
+            if score[cand_blocked] == maxscore:
+                return False,cand_blocked
+        count_max = 0
+        for i in range(m):
+            if score[i] == maxscore:
+                count_max += 1
+        return True,count_max
     if verbose:
         print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
         if len(danger) > 0:
@@ -792,7 +890,7 @@ def s3_kapp_O_level_2(k,c_list,w,U,D,m):
     
     
     
-def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False):
+def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
     if type == 2:
         kapp = int(np.sum(rule))
     M = nw.precompute_score(rule,m)
@@ -801,7 +899,6 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
     D = []
     total_score = np.sum(rule)*len(population)
     maximum_score = np.max(rule)*len(population)
-
     for i in range(len(population)):
         P = [[] for i in range(m)]
         C = [[] for i in range(m)]
@@ -820,7 +917,6 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                 D_i[elem_up].append(elem_down)
         D.append(D_i)
     #[[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],_,lup = nw.updown_psr(population,m,rule,verbose=verbose)
-    
     arglup = np.argsort(lup)
     possible_winners = []
     for i in range(m):
@@ -862,52 +958,80 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                                 cont = False
                 if cont:
                     possible_winners.append(w)
-        
-    if len(possible_winners) <= 2:
+
+    if len(possible_winners) <= 2 and list_q == [] and not(maxdiff):
         return possible_winners, []
     else:
-        sure_PW = possible_winners[:2]
+        if list_q == []:
+            if not(maxdiff):
+                sure_PW = possible_winners[:2]
+                cand_to_test = possible_winners[2:]
+            else:
+                sure_PW = []
+                cand_to_test = possible_winners[::]
+        else:
+            sure_PW = []
+            cand_to_test = []
+            for cand_list in list_q:
+                if cand_list in possible_winners:
+                    cand_to_test.append(cand_list)
         possible_PW = []
-        for candidate in possible_winners[2:]:
+        alone_winners = []
+        for candidate in cand_to_test:
             max_w = maximum_score-lup[candidate]
-            if max_w >= (total_score)/2: 
+            if (max_w >= (total_score)/2 and list_q == []) or (max_w > (total_score)/2): 
                 sure_PW.append(candidate)
                 print(str(candidate)+" : Default Winner")
             else:
                 verified = False
                 for i in range(shuffle):
                     danger = []
+                    count_tries = 0
                     while (verified == False):
                         if heuristic == 0:
-                            found_instance,winner = max_rank_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose)
+                            found_instance,winner = max_rank_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose,blocked=blocked)
                         else:
-                            found_instance,winner = random_choice_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose)
+                            found_instance,winner = random_choice_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose,blocked=blocked)
                         if found_instance:
                             verified = True
+                            if maxdiff and winner == 1:
+                                alone_winners.append(candidate)
                             break
                         else:
                             if winner in danger:
                                 break 
                             else:
                                 danger.append(winner)
+                                count_tries += 1
+                                if count_tries == max_tries:
+                                    break
                     if verified:
                         break
                 if verified:
-                    sure_PW.append(candidate)
+                    if list_q == []:
+                        sure_PW.append(candidate)
+                    else:
+                        return True,[]
                 else:
                     possible_PW.append(candidate)
-    return sure_PW,possible_PW
+    if list_q == []:
+        if maxdiff:
+            return sure_PW+possible_PW,alone_winners
+        else:
+            return sure_PW,possible_PW
+    else:
+        return False,possible_PW
             
 
 
-def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False):
-    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose)
+def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
+    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff)
     
-def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False):
-    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose)
+def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
+    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff)
     
     
-## Winner set
+## Winner set Plurality
 
 
 
@@ -959,7 +1083,7 @@ def score_set(dico,roots_list,roots_count,m,set_cand,n_voters):
                 k = 0
                 while k < lenc and ok:
                     if set_cand[k] != cand_i and roots_list[j][set_cand[k]] == 1:
-                        ok = False
+                        ok = False 
                     k += 1
                 if not(ok):
                     n_voters_i += roots_count[j]
@@ -969,10 +1093,10 @@ def score_set(dico,roots_list,roots_count,m,set_cand,n_voters):
             set_i.pop(i)
             comp_n_voters_i = n_voters - n_voters_i
             score_set_i = score_set(dico,roots_list_i,roots_count_i,m,set_i,n_voters_i)
-            if comp_n_voters_i >= score_set_i*(lenc-1):
+            if comp_n_voters_i >= score_set_i:#*(lenc-1):
                 dico[cstr] = score_set_i
                 return score_set_i
-            elif comp_n_voters_i + (n_voters_i-score_set_i) >= score_set_i:
+            elif comp_n_voters_i + (n_voters_i-score_set_i*(lenc-1)) >= score_set_i:
                 g = mf.GraphInt()
                 g.add_nodes(len(roots_count)+lenc)
                 for j in range(len(roots_count)):
@@ -986,16 +1110,6 @@ def score_set(dico,roots_list,roots_count,m,set_cand,n_voters):
                 if maxflow == score_set_i*lenc:
                     dico[cstr] = score_set_i
                     return score_set_i
-        g = mf.GraphInt()
-        g.add_nodes(len(roots_count)+lenc)
-        for j in range(len(roots_count)):
-            g.add_tedge(j,roots_count[j],0)
-            for k in range(lenc):
-                if roots_list[j][set_cand[k]] == 1:
-                    g.add_edge(j,len(roots_count)+k,roots_count[j],0)
-        for k in range(lenc):
-            g.add_tedge(len(roots_count)+k,0,n_voters//lenc)
-        maxflow = g.maxflow()
         dico[cstr] = n_voters//lenc
         return n_voters//lenc
 
@@ -1038,7 +1152,7 @@ def possibility_set(dico,roots_list,roots_count,m,set_cand,n_total):
     # if score*len(set_cand) >= (n_total - score): #This is false because maybe one of them cannot have less voters than score+1
     #     return True
     
-    if score*len(set_cand) < (n_total*len(set_cand))/m:
+    if score < n_total/m:
         return False
     g = mf.GraphInt()
     maxwanted = build_matrix_set(g,score,roots_list,roots_count,m)
@@ -1054,5 +1168,206 @@ def plurality_set(population,m,set_cand):
     roots = list_of_first_set(population,m)
     roots_list,roots_count = aggregate_set(roots,m)
     return possibility_set(dico,roots_list,roots_count,m,set_cand,n_total)
+    
+## Winner set Veto
+
+
+
+def list_of_last_set(population,m):
+    n = len(population)
+    matrix_rank = []
+    for i in range(n):
+        leaves = [1]*m
+        v = population[i]
+        for x in v:
+            (a,b) =x
+            if (leaves[a]==1):
+                leaves[a] = 0
+        matrix_rank.append(leaves)
+    return matrix_rank
+
+def aggregate_set_veto(matrix_rank,m):
+    dico = dict()
+    leaves_list = []
+    leaves_count = []
+    i = 0
+    for leaves in matrix_rank:
+        if str(leaves) in dico.keys():
+            leaves_count[dico[str(leaves)]] += 1
+        else:
+            leaves_count.append(1)
+            leaves_list.append(leaves)
+            dico[str(leaves)] = i
+            i+=1
+    return leaves_list,leaves_count
+        
+def zero_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_voters):
+    cstr = str(sorted(set_cand))
+    if cstr in dico.keys():
+        zero = dico[cstr]
+        return zero
+    lenc = len(set_cand)
+    if lenc == 1:
+        dico[cstr] = n_voters
+       # print("1",set_cand,n_voters)
+        return n_voters
+    else:
+        for i in range(lenc):
+            cand_i = set_cand[i]
+            leaves_list_i = []
+            leaves_count_i = []
+            n_voters_i = 0
+            for j in range(len(leaves_list)):
+                if leaves_list[j][cand_i] == 0:
+                    n_voters_i += leaves_count[j]
+                    leaves_list_i.append(leaves_list[j])
+                    leaves_count_i.append(leaves_count[j])
+            set_i = set_cand.copy()
+            set_i.pop(i)
+            comp_n_voters_i = n_voters - n_voters_i
+            zero_set_i = zero_set_veto(dico,leaves_list_i,leaves_count_i,m,set_i,n_voters_i)
+            if comp_n_voters_i <= zero_set_i:
+                dico[cstr] = zero_set_i
+               # print("<",set_cand,zero_set_i)
+                return zero_set_i
+        zeros = np.ceil(n_voters/lenc)
+        dico[cstr] = zeros
+       # print("=",set_cand,zeros)
+        return zeros
+
+def build_matrix_set_veto(g,zeros,leaves_list,leaves_count,m):
+    g.add_nodes(len(leaves_count)+m)
+    for i in range(len(leaves_count)):
+        g.add_tedge(i,leaves_count[i],0)
+        for j in range(m):
+            if leaves_list[i][j] == 1:
+                g.add_edge(i,len(leaves_count)+j,leaves_count[i],0)
+    for j in range(m):
+        g.add_tedge(len(leaves_count)+j,0,zeros)
+            
+    
+
+def possibility_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_total):
+    n_set = 0
+    compl = [x for x in range(m) if x not in set_cand]
+    leaves_list_zero = []
+    leaves_count_zero = []
+    for i in range(len(leaves_list)):
+        ok = False
+        for j in compl:
+            if leaves_list[i][j] == 1:
+                ok = True
+                break
+        if not(ok):
+            n_set += leaves_count[i]
+            leaves_list_zero.append(leaves_list[i])
+            leaves_count_zero.append(leaves_count[i])
+    zeros = zero_set_veto(dico,leaves_list_zero,leaves_count_zero,m,set_cand,n_set)
+    if zeros > n_total/m:
+        return False
+    g = mf.GraphInt()
+    maxwanted = build_matrix_set_veto(g,zeros,leaves_list,leaves_count,m)
+    maxflow = g.maxflow()
+    if maxflow == zeros*m:
+        return True
+    else:
+        return False
+    
+def veto_set(population,m,set_cand):
+    dico =dict()
+    n_total = len(population)
+    leaves = list_of_last_set(population,m)
+    leaves_list,leaves_count = aggregate_set_veto(leaves,m)
+    return possibility_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_total)
+     
+##
+
+
+def build_model_kapp(poset,m,k,Ws,blocked=[]):
+    n = len(poset)
+    model = Model("possible_winner")    
+    x = model.addVars(n, m, vtype = GRB.BINARY, name = "x" )
+    
+    W = Ws[0]
+    for cand in range(m):
+        if cand in Ws:
+            if cand != W:
+                model.addConstr( sum( x[l, cand] for l in range(n)) - sum(x[l,W] for l in range(n)) == 0)
+        else:
+            if cand in blocked:
+                model.addConstr( sum( x[l, cand] for l in range(n)) <=  sum(x[l,W] for l in range(n))-1)
+            else:
+                model.addConstr( sum( x[l, cand] for l in range(n)) - sum(x[l,W] for l in range(n)) <= 0)
+    model.addConstrs((sum(x[l,j] for j in range(m)) == k) for l in range(n))
+    for l in range(n):
+        for (a,b) in poset[l]:
+            model.addConstr(x[l,a] - x[l,b] >= 0)
+    return model
+    
+    
+def build_model_borda(poset,m,Ws,blocked=[]):
+    n = len(poset)
+    model = Model("possible_winner")    
+    x = model.addVars(n, m,m, vtype = GRB.BINARY, name = "x" )
+    for l in range(n):
+        for (a,b) in poset[l]:
+            model.addConstr(x[l,a,b] == 1)
+       
+    model.addConstrs( (x[l, i, j] + x[l, j, i] == 1) 
+                        for l in range(n) 
+                        for i in range(m) 
+                        for j in range(m) 
+                        if i!=j )
+    model.addConstrs( (x[l, i, j] + x[l, j, k] + x[l, k, i] <= 2) 
+                        for l in range(n)
+                        for i in range(m)
+                        for j in range(m)
+                        for k in range(m)
+                        if i != j and i != k and j != k)
+    W = Ws[0]
+    for cand in range(m):
+            if cand in Ws:
+                if cand != W:
+                    model.addConstr( sum( x[l, cand, j] for l in range(n)
+                                    for j in range(m) if j != cand) ==
+                                sum(x[l,W,k] for l in range(n)
+                                for k in range(m) if k!= W))
+            else:
+                if cand in blocked:
+                    model.addConstr( sum( x[l, cand, j] for l in range(n)
+                                    for j in range(m) if j != cand) <
+                                sum(x[l,W,k] for l in range(n)
+                                for k in range(m) if k!= W))
+                else:
+                    model.addConstr( sum( x[l, cand, j] for l in range(n)
+                                    for j in range(m) if j != cand) <= 
+                                sum(x[l,W,k] for l in range(n)
+                                for k in range(m) if k!= W))
+    return model
+    
+    
+
+def kapp(P,m,k,verbose=False,shuffle=1,max_tries=3,heuristic=0):
+    pws,pwp = approx_kapproval(P,m,k,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
+    for cand in pwp:
+        model = build_model_kapp(P,m,k,[cand])
+        model.optimize()
+        if model.status == GRB.Status.OPTIMAL:
+            pws.append(cand)
+    return pws      
+        
+        
+
+
+def borda(P,m,verbose=False,shuffle=1,max_tries=3,heuristic=0):
+    pws,pwp = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
+    for cand in pwp:
+        model = build_model_borda(P,m,[cand])
+        model.optimize()
+        if model.status == GRB.Status.OPTIMAL:
+            pws.append(cand)
+    return pws
+    
+    
     
     

@@ -6,6 +6,22 @@ import random
 from random import choices
 
 
+
+def transitive_closure(poset,m):
+    M = np.zeros((m,m))
+    M_path= np.zeros((m))
+    for (a,b) in poset:
+        M[a][b] = 1
+    for j in range(m-1):
+        M_path = M + np.dot(M_path,M)
+    v_with_tc = []
+    for i in range(m):
+        for j in range(m):
+            if M_path[i][j] != 0:
+                v_with_tc.append((i,j))
+    return v_with_tc
+    
+    
 def init_proba_rank(Pi,m):
     M = np.zeros((m,m)) 
     for i in range(m):
@@ -64,7 +80,7 @@ def solve_pairs(Pi,m):
         for i in range(m):
             for j in range(i+1,m):
                 M[j][i] = 1- M[i][j]
-        return M
+        return M #proba to have pairs (i,j)
         
         
 def solve_poset(Pi,m):
@@ -94,7 +110,7 @@ def solve_poset(Pi,m):
                             M[k][i][j] += np.sum(Pi[0][:i])*M_minus_1[k-1][i-1][j-1]
                         if j < m -1 :
                             M[k][i][j] += np.sum(Pi[0][j+1:])*M_minus_1[k-1][i][j]
-        return M
+        return M #proba to have pairs (i,j)
 
 class Mallows(object):
 
@@ -219,6 +235,7 @@ class Poset(object):
             if M_path[self.elements.index(e1)][self.elements.index(e2)] == 0:
                 pairs_without_TC.append((e1,e2))
         self.pairs = pairs_without_TC
+        
         
     def is_there_cycle(self) -> bool:
             M = np.zeros((self.m,self.m))
@@ -477,18 +494,21 @@ class RSM(object):
     def sample_a_poset_with_TC(self) -> Poset:
         return Poset(self.sample_pairs_with_TC())
         
-    def generate_a_population(self,n) -> List:
+    def generate_a_population(self,n,tc=False) -> List:
         pop = []
         for i in range(n):
             pairs = []
             try_count = 0
             while pairs == []:
-                pairs = self.sample_pairs()
+                if tc:
+                    pairs = self.sample_pairs_with_TC()
+                else:
+                    pairs = self.sample_pairs()
                 try_count += 1
                 if try_count == 10:
                     raise ValueError("Too many empty preferences")
             pop.append(pairs)
-        return [self.sample_pairs() for i in range(n)]
+        return pop
         
     def set_topk(self,k):
         if k < 0 or k > self.m:
@@ -518,23 +538,26 @@ class RSM(object):
         
     def proba_rank(self):
         M = np.zeros((self.m,self.m))
+        self.normalize_pi()
         M_proba = solve_proba_rank(self.pi,self.m)
         for i in range(self.m):
             for j in range(self.m):
-                M[r[i]][r[j]] = M_proba[i][j]
+                M[self.center[i]][self.center[j]] = M_proba[i][j]
         return M
         
     def proba_preference(self):
         M = np.zeros((self.m,self.m))
+        self.normalize_pi()
         M_proba = solve_pairs(self.pi,self.m)
 
         for i in range(self.m):
             for j in range(self.m):
-                M[r[i]][r[j]] = M_proba[i][j]
+                M[self.center[i]][self.center[j]] = M_proba[i][j]
         
         return M
         
     def proba_pairs(self):
+        self.normalize_pi()
         proba_brut = solve_poset(self.pi,self.m)
         p = self.p
         M = np.zeros((self.m,self.m))
@@ -543,8 +566,14 @@ class RSM(object):
                 sum = 0
                 for k in range(self.m):
                     sum += proba_brut[k][i][j]*p[k]
-                M[r[i]][r[j]] = sum
+                M[self.center[i]][self.center[j]] = sum
         return M
+    
+    def normalize_pi(self):
+        for i in range(self.m):
+            sum_i = np.sum(self.pi[i])
+            
+            self.pi[i] = self.pi[i]/sum_i
 
 class Mallows_RSM(RSM):
     def __init__(self,center:List,phi:float,p:List=[]):
