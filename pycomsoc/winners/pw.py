@@ -899,7 +899,7 @@ def s3_kapp_O_level_2(k,c_list,w,U,D,m):
     
     
     
-def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_competition=1000):
+def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_competition=1000,retnum=False):
     if type == 2:
         kapp = int(np.sum(rule))
     M = nw.precompute_score(rule,m)
@@ -972,8 +972,11 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                                 cont = False
                 if cont:
                     possible_winners.append(w)
-
+    step1 = m - max(len(possible_winners)-2,0)
+    step2 = 0
     if len(possible_winners) <= 2 and list_q == [] and not(maxdiff):
+        if retnum:
+            return m,0,0
         return possible_winners, []
     else:
         if list_q == []:
@@ -997,7 +1000,9 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
             max_w = maximum_score-lup[candidate]
             if (max_w >= (total_score)/2 and list_q == []) or (max_w > (total_score)/2): 
                 sure_PW.append(candidate)
-                print(str(candidate)+" : Default Winner")
+                step1 += 1
+                if verbose:
+                    print(str(candidate)+" : Default Winner")
             else:
                 verified = False
                 for i in range(shuffle):
@@ -1026,12 +1031,15 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                 if verified:
                     if list_q == []:
                         sure_PW.append(candidate)
+                        step2 += 1
                     else:
                         return True,[]
                 else:
                     possible_PW.append(candidate)
     if list_q == []:
-        if maxdiff:
+        if retnum:
+            return step1,step2,m-step1-step2
+        elif maxdiff:
             return sure_PW+possible_PW,alone_winners
         else:
             return sure_PW,possible_PW
@@ -1117,11 +1125,11 @@ def pw_pruning(population,m,rule,type=0,verbose=False,max_competition=10):
             
             
 
-def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000):
-    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet)
+def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000,retnum=False):
+    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet,retnum=retnum)
     
-def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000):
-    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet)
+def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000,retnum=False):
+    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet,retnum=retnum)
     
     
 ## Winner set Plurality
