@@ -5,6 +5,20 @@ import numpy as np
 import random
 from random import choices
 
+def density(poset,m):
+    M = np.zeros((m,m))
+    M_path= np.zeros((m))
+    for (a,b) in poset:
+        M[a][b] = 1
+    for j in range(m-1):
+        M_path = M + np.dot(M_path,M)
+    v_with_tc = []
+    d = 0
+    for i in range(m):
+        for j in range(m):
+            if M_path[i][j] != 0:
+                d += 1
+    return 2*d/(m*(m-1))
 
 
 def transitive_closure(poset,m):
@@ -129,6 +143,9 @@ class Mallows(object):
 
     def get_prob_i_j(self, i, j) -> float:
         return self.pij_matrix[i][j]
+    
+    def set_center(self,center):
+        self.center = list(center)
 
     def get_rank_of_item(self, item):
         return self.item_to_rank[item]
@@ -205,7 +222,7 @@ class Poset(object):
         elements.sort()
         return elements
     
-    def is_there_TC(self) -> bool:
+    def is_there_TC(self,verbose=False) -> bool:
         M = np.zeros((self.m,self.m))
         M_path= np.zeros((self.m,self.m))
         for (e1,e2) in self.pairs:
@@ -216,7 +233,8 @@ class Poset(object):
         v_sans_tc_i = []
         isok = True
         for (e1,e2) in self.pairs:
-            if M_path[e1][e2] != 0:
+            if M_path[self.elements.index(e1)][self.elements.index(e2)] != 0:
+            
                 return True
         return False
         
@@ -244,10 +262,11 @@ class Poset(object):
                 M[self.elements.index(e1)][self.elements.index(e2)] = 1
             for j in range(self.m):
                 M_path = M + np.dot(M_path,M)
+            count = 0
             for j in range(self.m):
                 if M_path[j][j] != 0:
-                    return True
-            return False
+                    count += 1
+            return count
             
     def missing(self,all_elements) -> List:
         missing_elem = []
@@ -347,6 +366,9 @@ class Poset(object):
                 if parents[child] ==0:
                     queue.append(child)
         return int(np.max(height_i))
+    
+    def get_density(self) -> int:
+        return density(self.pairs,self.m)
 
 
 
@@ -489,7 +511,10 @@ class RSM(object):
         return partial_order
         
     def sample_a_poset(self) -> Poset:
-        return Poset(self.sample_pairs())
+        pairs = []
+        while pairs == []:
+            pairs = self.sample_pairs()
+        return Poset(pairs)
         
     def sample_a_poset_with_TC(self) -> Poset:
         return Poset(self.sample_pairs_with_TC())

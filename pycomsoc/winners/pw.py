@@ -323,7 +323,9 @@ from . import nw
 
 ##
 
-def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
+def max_rank_approx(U,D,m,c,rule,danger=[],danger_weights=[],verbose=False,blocked=[]):
+    if danger_weights ==[]:
+        danger_weights = [1]*len(danger)
     n = len(U)
     index_order = [i for i in range(n)]
     np.random.shuffle(index_order)
@@ -481,11 +483,13 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
                         max_danger = len(danger_child[w])
                         maxqueue_danger = 0
                         for j2 in range(len(danger_child[w])):
+                            #maxqueue_danger = max(m-danger.index(danger_child[w][j2]),maxqueue_danger)
                             maxqueue_danger += score[danger_child[w][j2]]
                     elif (len(danger_child[w]) > 0) and (len(danger_child) == max_danger):
                         maxqueue_danger_w = 0
                         for j2 in range(max_danger):
                             maxqueue_danger_w += score[danger_child[w][j2]]
+                            #maxqueue_danger = max(m-danger.index(danger_child[w][j2]),maxqueue_danger)
                         if maxqueue_danger_w > maxqueue_danger:
                             maxqueue = score[w]
                             candmax = j
@@ -519,6 +523,11 @@ def max_rank_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
         if len(danger) > 0:
             print("Were minimized : "+str(danger))
     return False  ,np.argmax(score) 
+
+    
+    
+    
+    
     
 def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
     n = len(U)
@@ -890,7 +899,7 @@ def s3_kapp_O_level_2(k,c_list,w,U,D,m):
     
     
     
-def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
+def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_competition=1000):
     if type == 2:
         kapp = int(np.sum(rule))
     M = nw.precompute_score(rule,m)
@@ -928,7 +937,12 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
                 print(str(w)+" : Default Loser")
         else:
             is_a_PW = True
+            count_compet = 0
             for c in possible_winners:
+                if count_compet == max_competition:
+                    break
+                else:
+                    count_compet += 1
                 score_w,score_c = nw.s3_psr_O(rule,M,c,w,U,D,m)
                 matrix_score[c] = score_w-score_c
                 if verbose:
@@ -978,6 +992,8 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
         possible_PW = []
         alone_winners = []
         for candidate in cand_to_test:
+            if verbose:
+                print("Testing "+str(candidate))
             max_w = maximum_score-lup[candidate]
             if (max_w >= (total_score)/2 and list_q == []) or (max_w > (total_score)/2): 
                 sure_PW.append(candidate)
@@ -1023,12 +1039,89 @@ def approx_positional_scoring_rule(population,m,rule,shuffle=1,type=0,heuristic=
         return False,possible_PW
             
 
-
-def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
-    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff)
     
-def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
-    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff)
+def pw_pruning(population,m,rule,type=0,verbose=False,max_competition=10):
+    if type == 2:
+        kapp = int(np.sum(rule))
+    M = nw.precompute_score(rule,m)
+    lup = [0 for i in range(m)]
+    U = []
+    D = []
+    total_score = np.sum(rule)*len(population)
+    maximum_score = np.max(rule)*len(population)
+    for i in range(len(population)):
+        P = [[] for i in range(m)]
+        C = [[] for i in range(m)]
+        for (a,b) in population[i]:
+            P[b].append(a)
+            C[a].append(b)
+        roots = []
+        for j in range(m):
+            if len(P[j]) == 0:
+                roots.append(j)
+        U_i = nw.s1_psr_O(C,P,roots,m,lup,rule)
+        U.append(U_i)
+        D_i = [[] for i in range(m)]
+        for elem_down in range(m):
+            for elem_up in U_i[elem_down]:
+                D_i[elem_up].append(elem_down)
+        D.append(D_i)
+    arglup = np.argsort(lup)
+    possible_winners = []
+    for i in range(m):
+        matrix_score = np.ones(m)*np.inf
+        w = arglup[i]
+        max_w = maximum_score-lup[w]
+        if max_w < (total_score-max_w)/(m-1): 
+            if verbose:
+                print(str(w)+" : Default Loser")
+        else:
+            is_a_PW = True
+            count_compet = 0
+            for c in possible_winners:
+                if count_compet == max_competition:
+                    break
+                else:
+                    count_compet += 1
+                score_w,score_c = nw.s3_psr_O(rule,M,c,w,U,D,m)
+                matrix_score[c] = score_w-score_c
+                if verbose:
+                    print("Test "+str(c)+" ("+str(score_c)+") against "+str(w)+" ("+str(score_w)+")")
+                if score_w < score_c:
+                    is_a_PW = False
+                    break
+            if is_a_PW:
+                cont = True
+                if len(possible_winners) > 1 and type==2:
+                    arg_opponents = np.argsort(matrix_score)
+                    c_list = list(arg_opponents[:2])
+                    c2 = c_list[1]
+                    j = 2
+                    while matrix_score[arg_opponents[j]] == matrix_score[c2]:
+                        c_list.append(arg_opponents[j])
+                        j += 1
+                    for i_c_1 in range(len(c_list)):
+                        for i_c_2 in range(i_c_1+1,len(c_list)):
+                            c1 = c_list[i_c_1]
+                            c2 = c_list[i_c_2]
+                            score_to_combl = matrix_score[c1]+matrix_score[c2]
+                            score_combl = s3_kapp_O_level_2(kapp,[c1,c2],w,U,D,m)
+                            if verbose:
+                                print(str(w)+" vs "+" : "+str(c1)+","+str(c2)+" --> ("+str(score_combl)+"/"+str(score_to_combl)+")")
+                            if score_combl > score_to_combl:
+                                cont = False
+                if cont:
+                    possible_winners.append(w)
+    return possible_winners[:2],possible_winners[2:]
+    
+            
+            
+
+def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000):
+    return approx_positional_scoring_rule(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet)
+    
+def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000):
+    return approx_positional_scoring_rule(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet)
     
     
 ## Winner set Plurality
@@ -1345,7 +1438,30 @@ def build_model_borda(poset,m,Ws,blocked=[]):
                                 for k in range(m) if k!= W))
     return model
     
-    
+def build_model_psr(poset,m,rule,Ws,blocked=[]):
+    n = len(poset)
+    model = Model("possible_winner")    
+    x = model.addVars(n, m,m, vtype = GRB.BINARY, name = "x" )
+    for l in range(n):
+        for (a,b) in poset[l]:
+            model.addConstr(sum(p*x[l,b,p] for p in range(m)) >= sum(p*x[l,a,p] for p in range(m)))
+       
+    model.addConstrs( sum(x[l,i,p] for p in range(m)) == 1 for i in range(m) for l in range(n))
+    model.addConstrs( sum(x[l,i,p] for i in range(m)) == 1 for p in range(m) for l in range(n))
+    W = Ws[0]
+    for cand in range(m):
+            if cand in Ws:
+                if cand != W:
+                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
+                                     == sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
+            else:
+                if cand in blocked:
+                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
+                                     < sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
+                else:
+                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
+                                     <= sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
+    return model
 
 def kapp(P,m,k,verbose=False,shuffle=1,max_tries=3,heuristic=0):
     pws,pwp = approx_kapproval(P,m,k,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
@@ -1359,15 +1475,25 @@ def kapp(P,m,k,verbose=False,shuffle=1,max_tries=3,heuristic=0):
         
 
 
+# def borda(P,m,verbose=False,shuffle=1,max_tries=3,heuristic=0):
+#     pws,pwp = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
+#     for cand in pwp:
+#         model = build_model_borda(P,m,[cand])
+#         model.optimize()
+#         if model.status == GRB.Status.OPTIMAL:
+#             pws.append(cand)
+#     return pws
+#     
+#     
+    
+
 def borda(P,m,verbose=False,shuffle=1,max_tries=3,heuristic=0):
     pws,pwp = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
+    borda_rule = [m-1-i for i in range(m)]
     for cand in pwp:
-        model = build_model_borda(P,m,[cand])
+        model = build_model_psr(P,m,borda_rule,[cand])
         model.optimize()
         if model.status == GRB.Status.OPTIMAL:
             pws.append(cand)
     return pws
-    
-    
-    
     

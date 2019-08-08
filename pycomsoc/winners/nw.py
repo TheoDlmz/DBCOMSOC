@@ -255,7 +255,6 @@ def s3_borda_P(c,w,sr,ranks_l,m):
             if sr[i][c] != -1:
                 score_c += ranks_l[i][-1]-ranks_l[i][sr[i][c]+1]
             score_w += m-1-ranks_l[i][max(0,sr[i][w])]
- 
     return score_w,score_c
     
 def s3_borda_S(c,w,sr,m): 
@@ -271,7 +270,6 @@ def s3_borda_S(c,w,sr,m):
             if sr[i][c] != -1:
                 score_c += sr[i][-1]-sr[i][c]-1
             score_w += m-1-max(sr[i][w],0)
-
     return score_w,score_c
     
 
@@ -329,53 +327,268 @@ def borda(Population,m,verbose=False,optim_step1=True,optim_step2=True):
     return NW
 
 ## BORDA MultiThreading
+# 
+# def s1_borda_O_MT(inputs):
+#     (pairs,m) = inputs
+#     P = [[] for i in range(m)]
+#     C = [[] for i in range(m)]
+#     for (a,b) in pairs:
+#         P[b].append(a)
+#         C[a].append(b)
+#     lup = [0 for i in range(m)]
+#     roots = []
+#     for i in range(m):
+#         if len(P[i]) == 0:
+#             roots.append(i)
+#     Up = [[i] for i in range(m)]
+#     isMerge = (np.max([len(c) for c in C]) > 1)
+#     isSplit = (np.max([len(p) for p in P]) > 1)
+#     queue = roots.copy()
+#     parents = [len(p) for p in P]
+#     
+#     if isSplit and isMerge:
+#         while queue != []: 
+#             u = queue.pop() 
+#             Up[u] = list(set(Up[u])) 
+#             lup[u] += len(Up[u])-1
+#             for e in C[u]: 
+#                 Up[e].extend(Up[u]) 
+#                 parents[e] -= 1
+#                 if parents[e] == 0:
+#                     queue.append(e)
+#     else:
+#         while queue != []: 
+#             u = queue.pop() 
+#             lup[u] = len(Up[u])-1
+#             for e in C[u]: 
+#                 Up[e].extend(Up[u]) 
+#                 parents[e] -= 1
+#                 if parents[e] == 0:
+#                     queue.append(e)
+#     return Up,lup
+# 
+# 
+# 
+#     
+#   
+# def updown_borda_MT(Population,m,verbose=False,process=1):
+#     lup = [0 for i in range(m)]
+#     U = []
+#     sr_p = []
+#     rl_p = []
+#     sr_s = []
+#     sr_m = []
+#     cl_m = []
+#     n = len(Population)
+#     pairs_m = [(pair,m) for pair in Population]
+#     if process == 0:
+#         out = []
+#         for i in range(n):
+#             out.append(s1_borda_O_MT(pairs_m[i]))
+#     else:
+#         with Pool(process) as p:
+#             out = p.map(s1_borda_O_MT,pairs_m)
+#     lup = [0 for i in range(m)]
+#     for i in range(n):
+#         lup_i = out[i][1]
+#         U.append(out[i][0])
+#         for j in range(m):
+#             lup[j] += lup_i[j]
+#     
+#     minlup = min(lup)
+#     list_c = []
+#     for i in range(m):
+#         if lup[i] == minlup:
+#             list_c.append(i)
+#     lenc = len(list_c)
+#     D = [[] for i in range(lenc)]
+#     for P in Population:
+#         childs = [[] for i in range(m)]
+#         for k in P: 
+#             (n1,n2) = k
+#             childs[n1].append(n2)
+#         for j in range(lenc):
+#             c = list_c[j]
+#             visited = [False for i in range(m)]
+#             Downc = [c]
+#             queue = childs[c].copy()
+#             while queue != []:
+#                 nc = queue.pop()
+#                 Downc.append(nc)
+#                 for cc in childs[nc]:
+#                     if not(visited[cc]):
+#                         visited[cc] = True
+#                         queue.append(cc)
+#             D[j].append(Downc)
+#     
+#     if verbose:
+#         print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
+#     return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
+# 
+# 
+# 
+# 
+# 
+# def borda_MT(Population,m,verbose=False,process=1):
+#     UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process)
+#     NW = []
+#     order = np.argsort(lup)
+#     for i in range(len(list_c)):
+#         isaNW = True
+#         for j in range(m):
+#             if list_c[i] != order[j]:
+#                 if not(s3_borda(list_c[i],order[j],UD,i,m,verbose=verbose)):
+#                     isaNW = False
+#                     break
+#         if isaNW:
+#             NW.append(list_c[i])
+#     return NW
+#     
+    
+    
+## BORDA MultiThreading V0.2
 
 def s1_borda_O_MT(inputs):
-    t_begin = time.time()
     (pairs,m) = inputs
+    lup = [0 for i in range(m)]
+    lin = True
     P = [[] for i in range(m)]
     C = [[] for i in range(m)]
     for (a,b) in pairs:
         P[b].append(a)
         C[a].append(b)
-    lup = [0 for i in range(m)]
+    top = 0
+    bot = 0
     roots = []
+    leaves = []
     for i in range(m):
-        if len(P[i]) == 0:
-            roots.append(i)
-    Up = [[i] for i in range(m)]
-    isMerge = (np.max([len(c) for c in C]) > 1)
-    isSplit = (np.max([len(p) for p in P]) > 1)
-    queue = roots.copy()
-    parents = [len(p) for p in P]
-    
-    if isSplit and isMerge:
-        while queue != []: 
-            u = queue.pop() 
-            Up[u] = list(set(Up[u])) 
-            lup[u] += len(Up[u])-1
-            for e in C[u]: 
-                Up[e].extend(Up[u]) 
-                parents[e] -= 1
-                if parents[e] == 0:
-                    queue.append(e)
+        if len(P[i]) > 1 or len(C[i]) > 1 or not(lin):
+            lin = False
+            if len(C[i]) == 0 and len(P[i]) > 0:
+                leaves.append(i)
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+        else:
+            if len(C[i]) == 0  and len(P[i]) > 0:
+                leaves.append(i)
+                if len(P[i]) == 1:
+                    bot +=1
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+                if len(C[i])== 1:
+                    top +=1
+    if top == bot and lin:
+        if top == 1:
+            sr_s_i = s1_borda_S(C,roots,m,lup)
+            return sr_s_i,0,lup
+        
+        else:
+            sr_m_i,cl_m_i = s1_borda_M(C,roots,m,lup)
+            return (sr_m_i,cl_m_i),1,lup
     else:
-        while queue != []: 
-            u = queue.pop() 
-            lup[u] = len(Up[u])-1
-            for e in C[u]: 
-                Up[e].extend(Up[u]) 
-                parents[e] -= 1
-                if parents[e] == 0:
-                    queue.append(e)
-    t_end = time.time()
-    return Up,lup,(t_end-t_begin)
+        level = [-1 for i in range(m)]
+        current = 0
+        q = roots.copy()
+        sum = 0
+        last =0
+        while q != []:
+            temp = len(q)
+            sum += last*temp
+            last = temp
+            for c in q:
+                level[c] = current
+            current += 1
+            q = C[q[0]].copy()
+        cont = False
+        if sum == (len(pairs)):
+            cont = True
+            for i in range(m):
+                for x in C[i]:
+                    if level[x] != level[i] + 1:
+                        cont = False
+                        break
+                    if not(cont):
+                        break
+        if cont:
+            sr_p_i,rl_p_i = s1_borda_P(C,roots,m,lup)
+            return (sr_p_i,rl_p_i),2,lup
+            
+        else:
+            U_i = s1_borda_O(C,P,roots,m,lup)
+            return U_i,3,lup
 
 
 
-    
+def s1_borda_O_MTb(inputs):
+    (pairs,m,indice) = inputs
+    lup = [0 for i in range(m)]
+    lin = True
+    P = [[] for i in range(m)]
+    C = [[] for i in range(m)]
+    for (a,b) in pairs:
+        P[b].append(a)
+        C[a].append(b)
+    top = 0
+    bot = 0
+    roots = []
+    leaves = []
+    for i in range(m):
+        if len(P[i]) > 1 or len(C[i]) > 1 or not(lin):
+            lin = False
+            if len(C[i]) == 0 and len(P[i]) > 0:
+                leaves.append(i)
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+        else:
+            if len(C[i]) == 0  and len(P[i]) > 0:
+                leaves.append(i)
+                if len(P[i]) == 1:
+                    bot +=1
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+                if len(C[i])== 1:
+                    top +=1
+    if top == bot and lin:
+        if top == 1:
+            sr_s_i = s1_borda_S(C,roots,m,lup)
+            return sr_s_i,0,lup
+        
+        else:
+            sr_m_i,cl_m_i = s1_borda_M(C,roots,m,lup)
+            return (sr_m_i,cl_m_i),1,lup
+    else:
+        level = [-1 for i in range(m)]
+        current = 0
+        q = roots.copy()
+        sum = 0
+        last =0
+        while q != []:
+            temp = len(q)
+            sum += last*temp
+            last = temp
+            for c in q:
+                level[c] = current
+            current += 1
+            q = C[q[0]].copy()
+        cont = False
+        if sum == (len(pairs)):
+            cont = True
+            for i in range(m):
+                for x in C[i]:
+                    if level[x] != level[i] + 1:
+                        cont = False
+                        break
+                    if not(cont):
+                        break
+        if cont:
+            sr_p_i,rl_p_i = s1_borda_P(C,roots,m,lup)
+            return (sr_p_i,rl_p_i),2,lup
+            
+        else:
+            U_i = s1_borda_O(C,P,roots,m,lup)
+            return (U_i,indice),3,lup
   
-def updown_borda_MT(Population,m,verbose=False,process=1):
+def updown_borda_MT(Population,m,verbose=False,process=1,chunksize=1,rettime=False):
     lup = [0 for i in range(m)]
     U = []
     sr_p = []
@@ -384,151 +597,57 @@ def updown_borda_MT(Population,m,verbose=False,process=1):
     sr_m = []
     cl_m = []
     n = len(Population)
-    pairs_m = [(pair,m) for pair in Population]
+    #pairs_m = [(pair,m) for i,pair in enumerate(Population)]
+    pairs_mb = [(pair,m,i) for i,pair in enumerate(Population)]
+    pairs_next = []
     if process == 0:
         out = []
-        t_out_before = time.time()
-        t_in_before = time.time()
         for i in range(n):
             out.append(s1_borda_O_MT(pairs_m[i]))
-        t_in_after = time.time()
-        t_out_after = time.time()
     else:
-        t_out_before = time.time()
+        t1 = time.time()
         with Pool(process) as p:
-            t_in_before = time.time()
-            out = p.map(s1_borda_O_MT,pairs_m)
-            t_in_after = time.time()
-        t_out_after = time.time()
-    lup = [0 for i in range(m)]
-    sum_time = 0
-    for i in range(n):
-        lup_i = out[i][1]
-        U.append(out[i][0])
-        sum_time += out[i][2]
-        for j in range(m):
-            lup[j] += lup_i[j]
-    if process != 0:
-        print((t_out_after-t_out_before),sum_time,(t_out_after-t_out_before)-sum_time/process)
-    minlup = min(lup)
-    list_c = []
-    for i in range(m):
-        if lup[i] == minlup:
-            list_c.append(i)
-    lenc = len(list_c)
-    D = [[] for i in range(lenc)]
-    for P in Population:
-        childs = [[] for i in range(m)]
-        for k in P: 
-            (n1,n2) = k
-            childs[n1].append(n2)
-        for j in range(lenc):
-            c = list_c[j]
-            visited = [False for i in range(m)]
-            Downc = [c]
-            queue = childs[c].copy()
-            while queue != []:
-                nc = queue.pop()
-                Downc.append(nc)
-                for cc in childs[nc]:
-                    if not(visited[cc]):
-                        visited[cc] = True
-                        queue.append(cc)
-            D[j].append(Downc)
-    
-    if verbose:
-        print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
-    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
-
-
-
-
-
-def borda_MT(Population,m,verbose=False,process=1):
-    UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process)
-    NW = []
-    order = np.argsort(lup)
-    for i in range(len(list_c)):
-        isaNW = True
-        for j in range(m):
-            if list_c[i] != order[j]:
-                if not(s3_borda(list_c[i],order[j],UD,i,m,verbose=verbose)):
-                    isaNW = False
-                    break
-        if isaNW:
-            NW.append(list_c[i])
-    return NW
-    
-## BORDA MultiThreading V1
-
-def s1_borda_O_MT2(inputs):
-    (pairs,m) = inputs
-    U = []
-    lup = [0 for i in range(m)]
-    for poset in pairs:
-        P = [[] for i in range(m)]
-        C = [[] for i in range(m)]
-        for (a,b) in poset:
-            P[b].append(a)
-            C[a].append(b)
-        roots = []
-        for i in range(m):
-            if len(P[i]) == 0:
-                roots.append(i)
-        Up = [[i] for i in range(m)]
-        isMerge = (np.max([len(c) for c in C]) > 1)
-        isSplit = (np.max([len(p) for p in P]) > 1)
-        queue = roots.copy()
-        parents = [len(p) for p in P]
-        if isSplit and isMerge:
-            while queue != []: 
-                u = queue.pop() 
-                Up[u] = list(set(Up[u])) 
-                lup[u] += len(Up[u])-1
-                for e in C[u]: 
-                    Up[e].extend(Up[u]) 
-                    parents[e] -= 1
-                    if parents[e] == 0:
-                        queue.append(e)
-        else:
-            while queue != []: 
-                u = queue.pop() 
-                lup[u] += len(Up[u])-1
-                for e in C[u]: 
-                    Up[e].extend(Up[u]) 
-                    parents[e] -= 1
-                    if parents[e] == 0:
-                        queue.append(e)
-        U.append(Up)
-    return U,lup
-
-
-
-    
-  
-def updown_borda_MT2(Population,m,verbose=False,process=1):
-    lup = [0 for i in range(m)]
-    U = []
-    sr_p = []
-    rl_p = []
-    sr_s = []
-    sr_m = []
-    cl_m = []
-    n = len(Population)
-    t1 = time.time()
-    if process == 0:
-        U,lup= s1_borda_O_MT2((Population,m))
-    else:
-        pairs = [(Population[(n*i)//process:(n*(i+1))//process],m) for i in range(process)]
-        with Pool(process) as p:
-            out = p.map(s1_borda_O_MT2,pairs)
-        t2 = time.time()
-        print(t2-t1)
-        for i in range(process):
-            lup_i = out[i][1]
-            U.extend(out[i][0])
+            #out = p.map(s1_borda_O_MT,pairs_m,chunksize=chunksize)
+            out = p.map_async(s1_borda_O_MTb,pairs_mb,chunksize=chunksize)
+            print("test")
+            res = out.get()
+        
+        lup = [0 for i in range(m)]
+        # for i in range(n):
+        #     lup_i = out[i][2]
+        #     for j in range(m):
+        #         lup[j] += lup_i[j]
+        #     category = out[i][1]
+        #     if category == 0:
+        #         sr_s.append(out[i][0])
+        #     elif category == 1:
+        #         sr_m.append(out[i][0][0])
+        #         cl_m.append(out[i][0][1])
+        #     elif category == 2:
+        #         sr_p.append(out[i][0][0])
+        #         rl_p.append(out[i][0][1])
+        #     else:
+        #         U.append(out[i][0])
+        #         pairs_next.append(pairs_m[i][0])
+        for out_i in res:
+            lup_i = out_i[2]
             for j in range(m):
                 lup[j] += lup_i[j]
+            category = out_i[1]
+            if category == 0:
+                sr_s.append(out_i[0])
+            elif category == 1:
+                sr_m.append(out_i[0][0])
+                cl_m.append(out_i[0][1])
+            elif category == 2:
+                sr_p.append(out_i[0][0])
+                rl_p.append(out_i[0][1])
+            else:
+                U.append(out_i[0][0])
+                pairs_next.append(Population[out_i[0][1]])
+        t2 = time.time()
+    if rettime:
+        return t2-t1
     minlup = min(lup)
     list_c = []
     for i in range(m):
@@ -536,7 +655,7 @@ def updown_borda_MT2(Population,m,verbose=False,process=1):
             list_c.append(i)
     lenc = len(list_c)
     D = [[] for i in range(lenc)]
-    for P in Population:
+    for P in pairs_next:
         childs = [[] for i in range(m)]
         for k in P: 
             (n1,n2) = k
@@ -563,8 +682,8 @@ def updown_borda_MT2(Population,m,verbose=False,process=1):
 
 
 
-def borda_MT2(Population,m,verbose=False,process=1):
-    UD,list_c,lup = updown_borda_MT2(Population,m,verbose=verbose,process=process)
+def borda_MT(Population,m,verbose=False,process=1,function=0):
+    UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process,function=function)
     NW = []
     order = np.argsort(lup)
     for i in range(len(list_c)):
@@ -577,6 +696,9 @@ def borda_MT2(Population,m,verbose=False,process=1):
         if isaNW:
             NW.append(list_c[i])
     return NW
+    
+
+
     
  ## K-APPROVAL
  
@@ -801,10 +923,7 @@ def s3_kapp_O(k,c,w,U,D,m):
         minpos_w = len(U[i][w])
         maxpos_c = m-len(D[i])+1
         if c in U[i][w]:
-            if minpos_w <= k:
-                score_c += 1
-                score_w += 1
-            elif maxpos_c <= k:
+            if maxpos_c <= k and minpos_w > k:
                 score_c += 1
         else:
             if maxpos_c <= k:
@@ -819,13 +938,11 @@ def s3_kapp_P(k,c,w,sr,ranks_l,m):
     score_c = 0
     for i in range(n): 
         minpos_w = ranks_l[i][sr[i][w]] + 1
-        maxpos_c = m-(ranks_l[i][-1]-ranks_l[i][sr[i][c]+1])
+        maxpos_c = (m-ranks_l[i][-1])+ranks_l[i][sr[i][c]+1]
         
         if sr[i][c] >= 0 and (sr[i][c] < sr[i][w]):
-            if minpos_w <= k:
-                score_w += 1
-                score_c += 1
-            elif maxpos_c <= k:
+            
+            if maxpos_c <= k and minpos_w > k:
                 score_c += 1
         else:
             if maxpos_c <= k and sr[i][c] >=0:
@@ -916,7 +1033,167 @@ def plurality(Population,m,verbose=False):
     
 def veto(Population,m,verbose=False):
     return kapp(Population,m,m-1,verbose=verbose)
+
+
+## Kapp MultiThreading
+
+def s1_kapp_O_MT(inputs):
+    (pairs,m,k) = inputs
+    lup = [0 for i in range(m)]
+    lin = True
+    P = [[] for i in range(m)]
+    C = [[] for i in range(m)]
+    for (a,b) in pairs:
+        P[b].append(a)
+        C[a].append(b)
+    top = 0
+    bot = 0
+    roots = []
+    leaves = []
+    for i in range(m):
+        if len(P[i]) > 1 or len(C[i]) > 1 or not(lin):
+            lin = False
+            if len(C[i]) == 0 and len(P[i]) > 0:
+                leaves.append(i)
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+        else:
+            if len(C[i]) == 0  and len(P[i]) > 0:
+                leaves.append(i)
+                if len(P[i]) == 1:
+                    bot +=1
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+                if len(C[i])== 1:
+                    top +=1
+    if top == bot and lin:
+        if top == 1:
+            sr_s_i = s1_kapp_S(C,roots,m,lup,k)
+            return sr_s_i,0,lup
+        
+        else:
+            sr_m_i,cl_m_i = s1_kapp_M(C,roots,m,lup,k)
+            return (sr_m_i,cl_m_i),1,lup
+    else:
+        level = [-1 for i in range(m)]
+        current = 0
+        q = roots.copy()
+        sum = 0
+        last =0
+        while q != []:
+            temp = len(q)
+            sum += last*temp
+            last = temp
+            for c in q:
+                level[c] = current
+            current += 1
+            q = C[q[0]].copy()
+        cont = False
+        if sum == (len(pairs)):
+            cont = True
+            for i in range(m):
+                for x in C[i]:
+                    if level[x] != level[i] + 1:
+                        cont = False
+                        break
+                    if not(cont):
+                        break
+        if cont:
+            sr_p_i,rl_p_i = s1_kapp_P(C,roots,m,lup,k)
+            return (sr_p_i,rl_p_i),2,lup
+            
+        else:
+            U_i = s1_kapp_O(C,P,roots,m,lup,k)
+            return U_i,3,lup
+
+
+
     
+  
+def updown_kapp_MT(Population,m,k,verbose=False,process=1):
+    lup = [0 for i in range(m)]
+    U = []
+    sr_p = []
+    rl_p = []
+    sr_s = []
+    sr_m = []
+    cl_m = []
+    n = len(Population)
+    pairs_m = [(pair,m,k) for pair in Population]
+    pairs_next = []
+    if process == 0:
+        out = []
+        for i in range(n):
+            out.append(s1_kapp_O_MT(pairs_m[i]))
+    else:
+        with Pool(process) as p:
+            out = p.map(s1_kapp_O_MT,pairs_m)
+    lup = [0 for i in range(m)]
+    for i in range(n):
+        lup_i = out[i][2]
+        for j in range(m):
+            lup[j] += lup_i[j]
+        category = out[i][1]
+        if category == 0:
+            sr_s.append(out[i][0])
+        elif category == 1:
+            sr_m.append(out[i][0][0])
+            cl_m.append(out[i][0][1])
+        elif category == 2:
+            sr_p.append(out[i][0][0])
+            rl_p.append(out[i][0][1])
+        else:
+            U.append(out[i][0])
+            pairs_next.append(pairs_m[i][0])
+            
+    minlup = min(lup)
+    list_c = []
+    for i in range(m):
+        if lup[i] == minlup:
+            list_c.append(i)
+    lenc = len(list_c)
+    D = [[] for i in range(lenc)]
+    for P in pairs_next:
+        childs = [[] for i in range(m)]
+        for k in P: 
+            (n1,n2) = k
+            childs[n1].append(n2)
+        for j in range(lenc):
+            c = list_c[j]
+            visited = [False for i in range(m)]
+            Downc = [c]
+            queue = childs[c].copy()
+            while queue != []:
+                nc = queue.pop()
+                Downc.append(nc)
+                for cc in childs[nc]:
+                    if not(visited[cc]):
+                        visited[cc] = True
+                        queue.append(cc)
+            D[j].append(Downc)
+    
+    if verbose:
+        print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
+    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
+
+
+
+
+
+def kapp_MT(Population,m,k,verbose=False,process=1):
+    UD,list_c,lup = updown_kapp_MT(Population,m,k,verbose=verbose,process=process)
+    NW = []
+    order = np.argsort(lup)
+    for i in range(len(list_c)):
+        isaNW = True
+        for j in range(m):
+            if list_c[i] != order[j]:
+                if not(s3_kapp(k,list_c[i],order[j],UD,i,m,verbose=verbose)):
+                    isaNW = False
+                    break
+        if isaNW:
+            NW.append(list_c[i])
+    return NW
     
 ## ANY POSITIONAL SCORING RULE
 
@@ -1021,7 +1298,7 @@ def s1_psr_M(C,roots,m,lup,rule):
     return srv,clv
     
   
-def updown_psr(Population,m,rule,verbose=False):
+def updown_psr(Population,m,rule,verbose=False,optim_up=True):
     lup = [0 for i in range(m)]
     sr_p = []
     rl_p = []
@@ -1063,7 +1340,15 @@ def updown_psr(Population,m,rule,verbose=False):
                         roots.append(i)
                         if len(C[i])== 1:
                             top +=1
-            if top == bot and lin:
+            if not(optim_up):
+                U_i = s1_psr_O(C,P,roots,m,lup,rule)
+                U.append(U_i)
+                D_i = [[] for i in range(m)]
+                for elem_down in range(m):
+                    for elem_up in U_i[elem_down]:
+                        D_i[elem_up].append(elem_down)
+                D.append(D_i)
+            elif top == bot and lin:
                 if top == 1:
                     sr_s_i = s1_psr_S(C,roots,m,lup,rule)
                     sr_s.append(sr_s_i)
@@ -1126,23 +1411,24 @@ def s3_psr_O(rule,M,c,w,U,D,m,optim_prepross=True):
     n = len(U)
     score_w = 0
     score_c = 0
+    j = 0
     for i in range(n):
         if c in U[i][w]:
             block_size = intersect(D[i][c],U[i][w])
             if block_size == 0:
                 print("wtf")
             if optim_prepross:
-                score_c += M[max(len(U[i][c]),len(U[i][w])-block_size)-1,min(m-len(D[i][w]),m-len(D[i][c])+block_size)-1,block_size-1]
+                j += len(U[i][w])-1
+                score_c += M[len(U[i][w])-block_size-1,m-len(D[i][c])+block_size-1,block_size-1]
             else:
-                minim = rule[len(U[i][c])-1] - rule[len(U[i][c])-1+block_size]
-                for i in range(len(U[i][c]),m-len(D[i][c])-block_size+1):
-                    if rule[i] - rule[i+block_size] < minim:
-                        minim = rule[i] - rule[i+block_size]
+                minim = rule[len(U[i][w])-block_size-1] - rule[len(U[i][w])-1]
+                for it in range(len(U[i][w])-block_size,m-len(D[i][c])+1):
+                    if rule[it] - rule[it+block_size] < minim:
+                        minim = rule[it] - rule[it+block_size]
                 score_c += minim
         else:
             score_w += rule[len(U[i][w])-1]
             score_c += rule[m - len(D[i][c])]
-
     return score_w,score_c
     
 def s3_psr_P(rule,M,c,w,sr,ranks_l,m,optim_prepross=True): 
@@ -1151,16 +1437,23 @@ def s3_psr_P(rule,M,c,w,sr,ranks_l,m,optim_prepross=True):
     score_c = 0
     for i in range(n): 
         if (sr[i][c] >= 0) and (sr[i][c] < sr[i][w]):
+            block_size = ranks_l[i][sr[i][w]]+1 - ranks_l[i][sr[i][c]+1]
             
-            block_size = ranks_l[i][sr[i][w]] - ranks_l[i][sr[i][c]+1] + 1 
-            score_c += M[ranks_l[i][sr[i][c]],m-(ranks_l[i][-1]-ranks_l[i][sr[i][w]+1] + 1)-1,block_size-1]
+            if optim_prepross:
+                score_c += M[ranks_l[i][sr[i][w]]-block_size,m-(ranks_l[i][-1]-ranks_l[i][sr[i][c]+1] + 1)+block_size-1,block_size-1]
+            else:
+                minim = rule[ranks_l[i][sr[i][w]]-block_size]-rule[ranks_l[i][sr[i][w]]]
+                for it in range(ranks_l[i][sr[i][w]]+1-block_size,m-(ranks_l[i][-1]-ranks_l[i][sr[i][c]+1])):
+                    if rule[it]-rule[it+block_size] < minim:
+                        minim = rule[it]-rule[it+block_size]
+                
+                score_c += minim
         else:
             score_w += rule[ranks_l[i][max(0,sr[i][w])]]
             if sr[i][c] == -1:
                 score_c += rule[-1]
             else:
                 score_c += rule[m - (ranks_l[i][-1]-ranks_l[i][sr[i][c]+1] + 1)]
-
     return score_w,score_c
     
 def s3_psr_S(rule,M,c,w,sr,m,optim_prepross=True): 
@@ -1171,7 +1464,14 @@ def s3_psr_S(rule,M,c,w,sr,m,optim_prepross=True):
     for i in range(n): 
         if sr[i][c] >= 0 and sr[i][c] < sr[i][w]:
             block_size = sr[i][w] - sr[i][c]
-            score_c += M[sr[i][c],m-1-(sr[i][-1]-sr[i][w]),block_size-1]
+            if optim_prepross:
+                score_c += M[sr[i][c],m-1-(sr[i][-1]-sr[i][w]),block_size-1]
+            else:
+                minim = rule[sr[i][c]]-rule[sr[i][c]+block_size]
+                for i in range(sr[i][c]+1,(m - sr[i][-1])+sr[i][c]+1):
+                    if rule[i] - rule[i+block_size] < minim:
+                        minim = rule[i] - rule[i+block_size]
+                score_c += minim
         else:
             score_w += rule[max(sr[i][w],0)]
             if sr[i][c] == -1:
@@ -1190,7 +1490,14 @@ def s3_psr_M(rule,M,c,w,sr,cl,m,optim_prepross=True):
         (ssw,spw) = sr[i][w]
         if spc >=0 and (spc < spw) and ssw == ssc:
             block_size = spw-spc
-            score_c += M[spc-1,m-1-(cl[i][ssw]-spw),block_size-1]
+            if optim_prepross:
+                score_c += M[spc-1,m-1-(cl[i][ssw]-spw),block_size-1]
+            else:
+                minim = rule[spc] - rule[spc+block_size]
+                for i in range(spc+1,m - cl[i][ssc]+spc+1):
+                    if rule[i] - rule[i+block_size] < minim:
+                        minim = rule[i] - rule[i+block_size]
+                score_c += minim
         else:
             score_w += rule[max(spw,0)]
             if spc == -1:
@@ -1215,14 +1522,187 @@ def s3_psr(rule,M,c,w,UD,m,verbose=False,optim_prepross=True):
     return score_c >= score_w
 
 
-def positional_scoring_rule(Population,m,rule,verbose=False,optim_prepross=True):
-    UD,list_c,lup = updown_psr(Population,m,rule,verbose=verbose)
+def positional_scoring_rule(Population,m,rule,verbose=False,optim_prepross=True,optim_up=True,optim_comp=True):
+    UD,list_c,lup = updown_psr(Population,m,rule,verbose=verbose,optim_up=optim_up)
+    n = len(Population)
+    if m*m > n:
+        optim_prepross = False
     if optim_prepross:
         M = precompute_score(rule,m)
     else:
         M = []
     NW = []
-    order = np.argsort(lup)
+    if not(optim_comp):
+        list_c = [i for i in range(m)]
+        order = [i for i in range(m)]
+    else:
+        order = np.argsort(lup)
+    for i in range(len(list_c)):
+        isaNW = True
+        for j in range(m):
+            if list_c[i] != order[j]:
+                if not(s3_psr(rule,M,list_c[i],order[j],UD,m,verbose=verbose,optim_prepross=optim_prepross)):
+                    isaNW = False
+                    break
+        if isaNW:
+            NW.append(list_c[i])
+    return NW
+    
+## PSR MultiThreading
+
+
+def s1_psr_O_MT(inputs):
+    (pairs,m,rule,optim_up) = inputs
+    lup = [0 for i in range(m)]
+    lin = True
+    P = [[] for i in range(m)]
+    C = [[] for i in range(m)]
+    for (a,b) in pairs:
+        P[b].append(a)
+        C[a].append(b)
+    top = 0
+    bot = 0
+    roots = []
+    leaves = []
+    for i in range(m):
+        if len(P[i]) > 1 or len(C[i]) > 1 or not(lin):
+            lin = False
+            if len(C[i]) == 0 and len(P[i]) > 0:
+                leaves.append(i)
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+        else:
+            if len(C[i]) == 0  and len(P[i]) > 0:
+                leaves.append(i)
+                if len(P[i]) == 1:
+                    bot +=1
+            elif len(P[i]) == 0  and len(C[i]) > 0:
+                roots.append(i)
+                if len(C[i])== 1:
+                    top +=1
+    if not(optim_up):
+        U_i = s1_psr_O(C,P,roots,m,lup,rule)
+        D_i = [[] for i in range(m)]
+        for elem_down in range(m):
+            for elem_up in U_i[elem_down]:
+                D_i[elem_up].append(elem_down)
+        return (U_i,D_i),3,lup
+    elif top == bot and lin:
+        if top == 1:
+            sr_s_i = s1_psr_S(C,roots,m,lup,rule)
+            return sr_s_i,0,lup
+        
+        else:
+            sr_m_i,cl_m_i = s1_psr_M(C,roots,m,lup,rule)
+            return (sr_m_i,cl_m_i),1,lup
+    else:
+        level = [-1 for i in range(m)]
+        current = 0
+        q = roots.copy()
+        sum = 0
+        last =0
+        while q != []:
+            temp = len(q)
+            sum += last*temp
+            last = temp
+            for c in q:
+                level[c] = current
+            current += 1
+            q = C[q[0]].copy()
+        cont = False
+        if sum == (len(pairs)):
+            cont = True
+            for i in range(m):
+                for x in C[i]:
+                    if level[x] != level[i] + 1:
+                        cont = False
+                        break
+                    if not(cont):
+                        break
+        if cont:
+            sr_p_i,rl_p_i = s1_psr_P(C,roots,m,lup,rule)
+            return (sr_p_i,rl_p_i),2,lup
+            
+        else:
+            U_i = s1_psr_O(C,P,roots,m,lup,rule)
+            D_i = [[] for i in range(m)]
+            for cand_i in range(m):
+                for cand_j in U_i[cand_i]:
+                    D_i[cand_j].append(cand_i)
+            return (U_i,D_i),3,lup
+
+
+
+    
+  
+def updown_psr_MT(Population,m,rule,verbose=False,process=1,optim_up=True):
+    lup = [0 for i in range(m)]
+    U = []
+    D = []
+    sr_p = []
+    rl_p = []
+    sr_s = []
+    sr_m = []
+    cl_m = []
+    n = len(Population)
+    pairs_m = [(pair,m,rule,optim_up) for pair in Population]
+    pairs_next = []
+    if process == 0:
+        out = []
+        for i in range(n):
+            out.append(s1_psr_O_MT(pairs_m[i]))
+    else:
+        with Pool(process) as p:
+            out = p.map(s1_psr_O_MT,pairs_m)
+    lup = [0 for i in range(m)]
+    for i in range(n):
+        lup_i = out[i][2]
+        for j in range(m):
+            lup[j] += lup_i[j]
+        category = out[i][1]
+        if category == 0:
+            sr_s.append(out[i][0])
+        elif category == 1:
+            sr_m.append(out[i][0][0])
+            cl_m.append(out[i][0][1])
+        elif category == 2:
+            sr_p.append(out[i][0][0])
+            rl_p.append(out[i][0][1])
+        else:
+            U.append(out[i][0][0])
+            D.append(out[i][0][1])
+            pairs_next.append(pairs_m[i][0])
+            
+    minlup = min(lup)
+    list_c = []
+    for i in range(m):
+        if lup[i] == minlup:
+            list_c.append(i)
+    lenc = len(list_c)
+    
+    if verbose:
+        print("S : "+str(len(sr_s))+", M : "+str(len(sr_m))+", P : "+str(len(sr_p))+", O : "+str(len(U)))
+    return [[U,D],[sr_p,rl_p],[sr_s],[sr_m,cl_m]],list_c,lup
+
+
+
+
+
+def psr_MT(Population,m,rule,verbose=False,process=1,optim_prepross=True,optim_up=True,optim_comp=True):
+    UD,list_c,lup = updown_psr_MT(Population,m,rule,verbose=verbose,process=process,optim_up=optim_up)
+    n = len(Population)
+    if m*m > n:
+        optim_prepross = False
+    if optim_prepross:
+        M = precompute_score(rule,m)
+    else:
+        M = []
+    NW = []
+    if not(optim_comp):
+        list_c = [i for i in range(m)]
+        order = [i for i in range(m)]
+    else:
+        order = np.argsort(lup)
     for i in range(len(list_c)):
         isaNW = True
         for j in range(m):
