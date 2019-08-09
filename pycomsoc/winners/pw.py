@@ -3,6 +3,8 @@ import numpy as np
 import maxflow as mf
 import random 
 import time
+import sys
+sys.path.append( '/home/vishal/gurobi811/linux64/lib/python3.5_utf32')
 from gurobipy import *
 
 ## Plurality
