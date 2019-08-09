@@ -594,6 +594,7 @@ def s1_borda_O_MTb_concat(list):
     out = []
     for (pair,m,ind) in list:
         out.append(s1_borda_O_MTb(pair,m,ind))
+    
     return out
             
   
@@ -616,7 +617,7 @@ def updown_borda_MT(Population,m,verbose=False,process=1,chunksize=1,rettime=Fal
     else:
         t1 = time.time()
         with Pool(process) as p:
-            out = p.map(s1_borda_O_MTb_concat,pairs_mb_concat,chunksize=chunksize)
+            out = p.imap_unordered(s1_borda_O_MTb_concat,pairs_mb_concat,chunksize=chunksize)
         t2 = time.time()
         if rettime:
             return t2-t1
@@ -638,8 +639,8 @@ def updown_borda_MT(Population,m,verbose=False,process=1,chunksize=1,rettime=Fal
         #     else:
         #         U.append(out[i][0])
         #         pairs_next.append(pairs_m[i][0])
-        for ind_p in range(process):
-            for out_i in out[ind_p]:
+        for out_el in out:
+            for out_i in out_el:
                 lup_i = out_i[2]
                 for j in range(m):
                     lup[j] += lup_i[j]
@@ -689,8 +690,8 @@ def updown_borda_MT(Population,m,verbose=False,process=1,chunksize=1,rettime=Fal
 
 
 
-def borda_MT(Population,m,verbose=False,process=1):
-    UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process)
+def borda_MT(Population,m,verbose=False,process=1,chunks=10):
+    UD,list_c,lup = updown_borda_MT(Population,m,verbose=verbose,process=process,chunks=chunks)
     NW = []
     order = np.argsort(lup)
     for i in range(len(list_c)):
