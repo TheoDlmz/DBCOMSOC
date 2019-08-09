@@ -1201,65 +1201,6 @@ def veto_set(population,m,set_cand):
 ##
 
 
-def build_model_kapp(poset,m,k,Ws,blocked=[]):
-    n = len(poset)
-    model = Model("possible_winner")    
-    x = model.addVars(n, m, vtype = GRB.BINARY, name = "x" )
-    
-    W = Ws[0]
-    for cand in range(m):
-        if cand in Ws:
-            if cand != W:
-                model.addConstr( sum( x[l, cand] for l in range(n)) - sum(x[l,W] for l in range(n)) == 0)
-        else:
-            if cand in blocked:
-                model.addConstr( sum( x[l, cand] for l in range(n)) <=  sum(x[l,W] for l in range(n))-1)
-            else:
-                model.addConstr( sum( x[l, cand] for l in range(n)) - sum(x[l,W] for l in range(n)) <= 0)
-    model.addConstrs((sum(x[l,j] for j in range(m)) == k) for l in range(n))
-    for l in range(n):
-        for (a,b) in poset[l]:
-            model.addConstr(x[l,a] - x[l,b] >= 0)
-    return model
-    
-
-    
-def build_model_psr(poset,m,rule,Ws,blocked=[]):
-    n = len(poset)
-    model = Model("possible_winner")    
-    x = model.addVars(n, m,m, vtype = GRB.BINARY, name = "x" )
-    for l in range(n):
-        for (a,b) in poset[l]:
-            model.addConstr(sum(p*x[l,b,p] for p in range(m)) >= sum(p*x[l,a,p] for p in range(m)))
-       
-    model.addConstrs( sum(x[l,i,p] for p in range(m)) == 1 for i in range(m) for l in range(n))
-    model.addConstrs( sum(x[l,i,p] for i in range(m)) == 1 for p in range(m) for l in range(n))
-    W = Ws[0]
-    for cand in range(m):
-            if cand in Ws:
-                if cand != W:
-                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
-                                     == sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
-            else:
-                if cand in blocked:
-                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
-                                     < sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
-                else:
-                    model.addConstr( sum( sum(rule[p]*x[l, cand, p] for p in range(m)) for l in range(n))
-                                     <= sum( sum(rule[p]*x[l, W, p] for p in range(m)) for l in range(n)))
-    return model
-
-def kapp(P,m,k,verbose=False,shuffle=1,max_tries=3,heuristic=0):
-    pws,pwp = approx_kapproval(P,m,k,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
-    for cand in pwp:
-        model = build_model_kapp(P,m,k,[cand])
-        model.optimize()
-        if model.status == GRB.Status.OPTIMAL:
-            pws.append(cand)
-    return pws      
-        
-        
-
 
 
     
@@ -1397,11 +1338,10 @@ def checkPW(m, n,dist_cand,k=1):
   
 
 
-def PW_gurobi(partial_profs,m,n,rule,pwlist=0):
+def PW_gurobi(partial_profs,m,rule,pwlist):
+    n = len(partial_prods)
     pw = []
     not_pw = []
-    if pwlist == 0:
-        pwlist = range(m)
     #variables to keep track of timing
     tot_start = time.time()
     read_start = time.time()
@@ -1439,27 +1379,15 @@ def PW_gurobi(partial_profs,m,n,rule,pwlist=0):
             cand_times[retVal[0]] = retVal[5]
             if retVal[1] == 1:
                 pw.append(retVal[0])
-    
-    
-    
-def borda(P,m,verbose=False,shuffle=1,max_tries=3,heuristic=0):
-    pws,pwp = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
-    for cand in pwp:
-        model = build_model_borda(P,m,[cand])
-        model.optimize()
-        if model.status == GRB.Status.OPTIMAL:
-            pws.append(cand)
-    return pws
-    
-    
+    return pw
     
 
-def borda(P,m,verbose=False,shuffle=1,max_tries=3,heuristic=0):
-    pws,pwp = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,heuristic=heuristic,verbose=verbose)
-    borda_rule = [m-1-i for i in range(m)]
-    for cand in pwp:
-        model = build_model_psr(P,m,borda_rule,[cand])
-        model.optimize()
-        if model.status == GRB.Status.OPTIMAL:
-            pws.append(cand)
-    return pws
+def borda(P,m,verbose=False,shuffle=1,max_tries=4,max_compet=10):
+    pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
+    pwg = PW_gurobi(P,m,'b',pwp)
+    return pws+pwg
+    
+def kapp(P,m,k,verbose=False,shuffle=1,max_tries=4,max_compet=10):
+    pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
+    pwg = PW_gurobi(P,m,'k'+str(k),pwp)
+    return pws+pwg
