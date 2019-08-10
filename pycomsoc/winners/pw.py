@@ -951,9 +951,9 @@ def approx(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_trie
         if retnum:
             return step1,step2,step3
         elif maxdiff:
-            return winners+possible_PW,alone_winners
+            return winners+possible_PW+default_winners,alone_winners
         else:
-            return winners,possible_PW,count_world
+            return winners+default_winners,possible_PW,count_world
     else:
         return False,possible_PW
             
