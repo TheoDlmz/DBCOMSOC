@@ -1,4 +1,4 @@
-
+from multiprocessing import Pool
 import numpy as np
 import maxflow as mf
 import random 
@@ -1226,8 +1226,10 @@ def createModel(n,m,partial_profs,rule):
 
     #Constrains - partial profile  
     start = time.time() 
-    for l in partial_profs:
-        model.addConstr( 1 <= sum(p * (x[l[0], l[1],p] - x[l[0], l[2],p]) for p in range(m) ) )
+    for ind,poset in enumerate(partial_profs):
+        for (a,b) in poset:
+        
+            model.addConstr( 1 <= sum(p * (x[ind, a,p] - x[ind, b,p]) for p in range(m) ) )
     #rofile coonstraint time end
     prtl_cstr_time = time.time() - start
   elif rule is 'v':
@@ -1241,8 +1243,9 @@ def createModel(n,m,partial_profs,rule):
     start = time.time()
     #these constraints are for ensuring prefrences are upheld, since l[1] has to be preferable
     #and there is only 1 zero l[1] must be 1
-    for l in partial_profs:
-        model.addConstr(1 == x[l[0], l[1]])
+    for ind,poset in enumerate(partial_profs):
+        for (a,b) in poset:
+            model.addConstr(1 == x[ind, a])
     prtl_cstr_time = time.time() - start
     cstr2_time = 0
   else:
@@ -1257,8 +1260,9 @@ def createModel(n,m,partial_profs,rule):
     start = time.time()
     #constraint checking for possible winner (comparing num times appearing in first k positions)
     #these constraints are for ensuring prefrences are upheld
-    for l in partial_profs:
-        model.addConstr(0 <= sum(x[l[0], l[1],p] - x[l[0], l[2],p] for p in range(k)))
+    for ind,poset in enumerate(partial_profs):
+        for (a,b) in poset:
+            model.addConstr(0 <= sum(x[ind, a,p] - x[ind, b,p] for p in range(k)))
     prtl_cstr_time = time.time() - start
   #save model file
   model.write('model.mps')
@@ -1266,7 +1270,8 @@ def createModel(n,m,partial_profs,rule):
   
   
   
-def checkPW(m, n,dist_cand,k=1):
+def checkPW(input):
+  (m,n,dist_cand,rule,k) = input
   output = -1
   pw_cstr_time = -1
   prtl_cstr_time = -1
@@ -1338,15 +1343,10 @@ def checkPW(m, n,dist_cand,k=1):
   
 
 
-def PW_gurobi(partial_profs,m,rule,pwlist):
-    n = len(partial_prods)
+def PW_gurobi(partial_profs,m,rule,pwlist,process=5):
+    n = len(partial_profs)
     pw = []
     not_pw = []
-    #variables to keep track of timing
-    tot_start = time.time()
-    read_start = time.time()
-    populate_partial_profiles()
-    read_end = time.time()
     output = None
     #returned tuple from createModel functions
     time_tup = None
@@ -1358,17 +1358,20 @@ def PW_gurobi(partial_profs,m,rule,pwlist):
     #assigning value to k
     if rule[:1]=='k':
         k = int(rule[1:])
+    else:
+        k =0
     #creates a set of processes to simultaneously make calculations
-    pool = Pool(processes = NUM_PROCESSES)
+    pool = Pool(processes = process)
     #generates the common constraints
-    time_tup = createModel()
-    output = pool.imap_unordered(checkPW, pwlist, CHUNK_SIZE)
+    time_tup = createModel(n,m,partial_profs,rule)
+    input_gurobi = [(m,n,cand,rule,k) for cand in pwlist]
+    output = pool.imap_unordered(checkPW, input_gurobi, process)
     pool.close()
     pool.join()
     for retVal in output:
         print(retVal)
         if not isinstance(retVal,tuple):
-            print(filename + ": ERROR in main:", retVal)
+            print("ERROR in main:", retVal)
             #raise ProcessFail(filename + ": A candidate has failed with the following exception:", retVal)
             sys.exit(1)
         else:
@@ -1382,12 +1385,16 @@ def PW_gurobi(partial_profs,m,rule,pwlist):
     return pw
     
 
-def borda(P,m,verbose=False,shuffle=1,max_tries=4,max_compet=10):
+def borda(P,m,verbose=False,shuffle=1,max_tries=4,max_compet=10,process=5):
     pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
-    pwg = PW_gurobi(P,m,'b',pwp)
+    if pwp == []:
+        return pws
+    pwg = PW_gurobi(P,m,'b',pwp,process)
     return pws+pwg
     
 def kapp(P,m,k,verbose=False,shuffle=1,max_tries=4,max_compet=10):
     pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
-    pwg = PW_gurobi(P,m,'k'+str(k),pwp)
+    if pwp == []:
+        return pws
+    pwg = PW_gurobi(P,m,'k'+str(k),pwp,process)
     return pws+pwg
