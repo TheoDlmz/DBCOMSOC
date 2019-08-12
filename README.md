@@ -1,15 +1,15 @@
 # DBCOMSOC: Implementing The Necessary and Possible Winner Problem
 
-## Necessary Winner (NW)
-
-## Possible Winner (PW)
-We reduce the PW problem to Integer Linear Programming and SAT. 
-
-__Basic notation__
+__Notation__
 
 Number of candidates _m_
 
 Number of voters _n_
+
+## Necessary Winner (NW)
+
+## Possible Winner (PW)
+We reduce the PW problem to Integer Linear Programming and add some optimisation and heuristics to make it efficient. 
 
 ### Experiments
 We evaluate our system with two kinds of experiments. 
