@@ -10,6 +10,7 @@ Number of voters _n_
 
 ## Possible Winner (PW)
 We reduce the PW problem to Integer Linear Programming and add some optimisation and heuristics to make it efficient. 
+For more details on PW and the reduction see https://github.com/vchakrab/PW_DBCOMSOC
 
 ### Experiments
 We evaluate our system with two kinds of experiments. 
