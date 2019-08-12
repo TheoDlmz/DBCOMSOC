@@ -1,6 +1,8 @@
-# DBCOMSOC
+# DBCOMSOC: Implementing The Necessary and Possible Winner Problem
 
-## Implementing The Possible Winner Problem with Gurobi
+## Necessary Winner (NW)
+
+## Possible Winner (PW)
 We reduce the PW problem to Integer Linear Programming and SAT. 
 
 __Basic notation__
