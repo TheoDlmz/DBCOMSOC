@@ -1,9 +1,9 @@
 import mysql.connector
 from pycomsoc.winners import pw
 import numpy as np
-
 from gurobipy import *
 
+## This code compile code to run query with possible and necessary answers 
 
 def set_to_test(results,m):
     if len(results) == 1:

@@ -1,5 +1,6 @@
 from rply import LexerGenerator
 
+# Lexer : Tokens of the language
 
 class Lexer():
     def __init__(self):
