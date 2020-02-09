@@ -3,6 +3,8 @@ from parse import Parser
 from ast import Query
 import mysql.connector
 
+PASSWORD = ""
+DATABASE = ""
 short_query = """
 q() = WINNER(cand=w),deserts(id=w,contain_chocolate=False);
 """
@@ -22,8 +24,8 @@ q() = deserts(id=w,contain_chocolate=False),deserts(id=w2,contain_chocolate=True
 mydb = mysql.connector.connect(
   host="localhost",
   user="root",
-  passwd="Levrac54&@sql",
-  database="dbcomsoc"
+  passwd=PASSWORD,
+  database=DATABASE
 )
 
 
