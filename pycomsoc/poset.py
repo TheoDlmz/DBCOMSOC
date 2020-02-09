@@ -2,6 +2,9 @@ from typing import List, Tuple
 import numpy as np
 import random
 from random import choices
+from .winners import nw,pw
+
+## Tools functions
 
 def density(poset,m):
     M = np.zeros((m,m))
@@ -124,83 +127,8 @@ def solve_poset(Pi,m):
                             M[k][i][j] += np.sum(Pi[0][j+1:])*M_minus_1[k-1][i][j]
         return M #proba to have pairs (i,j)
 
-class Mallows(object):
+## Poset class
 
-    def __init__(self, center: List, phi: float):
-        self.center = list(center)
-        self.phi = phi
-
-        self.m: int = len(self.center)
-        self.item_to_rank = {item: rank for rank, item in enumerate(self.center)}
-
-        self.pij_matrix: Tuple[Tuple[float]] = self.calculate_pij_matrix()
-        self.normalization_constant = self.calculate_normalization_constant()
-
-    def __str__(self):
-        return f'Mallows(center={self.center}, phi={self.phi})'
-
-    def get_prob_i_j(self, i, j) -> float:
-        return self.pij_matrix[i][j]
-    
-    def set_center(self,center):
-        self.center = list(center)
-
-    def get_rank_of_item(self, item):
-        return self.item_to_rank[item]
-
-    def sample_a_ranking(self) -> List:
-        ranking = []
-        insertion_range = []
-
-        for step, item in enumerate(self.center):
-            insertion_range.append(step)
-            sample_index = choices(insertion_range, weights=self.pij_matrix[step])[0]
-
-            ranking.insert(sample_index, item)
-
-        return ranking
-
-    def sample_a_permutation(self) -> List:
-        return self.sample_a_ranking()
-
-    def calculate_normalization_constant(self) -> float:
-        try:
-            norm = (1 - self.phi) ** (-self.m)
-            phi_i = self.phi
-            for i in range(1, self.m + 1):
-                norm *= (1 - phi_i)
-                phi_i *= self.phi
-        except ZeroDivisionError:
-            norm = factorial(self.m)
-        return norm
-
-    def calculate_kendall_tau_distance(self, permutation) -> int:
-        dist = 0
-        for i, e_i in enumerate(permutation[:-1]):
-            for e_j in permutation[i:]:
-                if self.get_rank_of_item(e_i) > self.get_rank_of_item(e_j):
-                    dist +=1 
-
-        return dist
-
-    def calculate_prob_by_distance(self, distance):
-        return (self.phi ** distance) / self.normalization_constant
-
-    def calculate_prob_of_permutation(self, permutation):
-        dist = self.calculate_kendall_tau_distance(permutation)
-        return self.calculate_prob_by_distance(dist)
-
-    def calculate_pij_matrix(self):
-
-        pij = []
-        for i in range(self.m):
-            pi = [self.phi ** (i - j) for j in range(i + 1)]
-            summation = sum(pi)
-            pi = [p / summation for p in pi]
-            pij.append(tuple(pi))
-
-        return tuple(pij)
-        
         
 class Poset(object):
     def __init__(self,pairs:List):
@@ -367,8 +295,90 @@ class Poset(object):
     
     def get_density(self) -> int:
         return density(self.pairs,self.m)
+        
 
 
+## Class to generate mallows models
+
+class Mallows(object):
+
+    def __init__(self, center: List, phi: float):
+        self.center = list(center)
+        self.phi = phi
+
+        self.m: int = len(self.center)
+        self.item_to_rank = {item: rank for rank, item in enumerate(self.center)}
+
+        self.pij_matrix: Tuple[Tuple[float]] = self.calculate_pij_matrix()
+        self.normalization_constant = self.calculate_normalization_constant()
+
+    def __str__(self):
+        return f'Mallows(center={self.center}, phi={self.phi})'
+
+    def get_prob_i_j(self, i, j) -> float:
+        return self.pij_matrix[i][j]
+    
+    def set_center(self,center):
+        self.center = list(center)
+
+    def get_rank_of_item(self, item):
+        return self.item_to_rank[item]
+
+    def sample_a_ranking(self) -> List:
+        ranking = []
+        insertion_range = []
+
+        for step, item in enumerate(self.center):
+            insertion_range.append(step)
+            sample_index = choices(insertion_range, weights=self.pij_matrix[step])[0]
+
+            ranking.insert(sample_index, item)
+
+        return ranking
+
+    def sample_a_permutation(self) -> List:
+        return self.sample_a_ranking()
+
+    def calculate_normalization_constant(self) -> float:
+        try:
+            norm = (1 - self.phi) ** (-self.m)
+            phi_i = self.phi
+            for i in range(1, self.m + 1):
+                norm *= (1 - phi_i)
+                phi_i *= self.phi
+        except ZeroDivisionError:
+            norm = factorial(self.m)
+        return norm
+
+    def calculate_kendall_tau_distance(self, permutation) -> int:
+        dist = 0
+        for i, e_i in enumerate(permutation[:-1]):
+            for e_j in permutation[i:]:
+                if self.get_rank_of_item(e_i) > self.get_rank_of_item(e_j):
+                    dist +=1 
+
+        return dist
+
+    def calculate_prob_by_distance(self, distance):
+        return (self.phi ** distance) / self.normalization_constant
+
+    def calculate_prob_of_permutation(self, permutation):
+        dist = self.calculate_kendall_tau_distance(permutation)
+        return self.calculate_prob_by_distance(dist)
+
+    def calculate_pij_matrix(self):
+
+        pij = []
+        for i in range(self.m):
+            pi = [self.phi ** (i - j) for j in range(i + 1)]
+            summation = sum(pi)
+            pi = [p / summation for p in pi]
+            pij.append(tuple(pi))
+
+        return tuple(pij)
+        
+   
+## To generate RSM models
 
 class RSM(object):
     def __init__(self,center:List,pi:List,p:List):
@@ -598,6 +608,9 @@ class RSM(object):
             
             self.pi[i] = self.pi[i]/sum_i
 
+## To generate RSM with Mallows
+
+
 class Mallows_RSM(RSM):
     def __init__(self,center:List,phi:float,p:List=[]):
         self.center = list(center)
@@ -656,6 +669,7 @@ class Mallows_RSM(RSM):
         self.phi = phi
         self.pi = self.q_mallows()
 
+## To generate drop cand model
 
 class drop_cand(object):
     def __init__(self,center:List,phi:float=1):
