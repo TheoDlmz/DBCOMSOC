@@ -1,1400 +1,1504 @@
+# Library pyCOMSOC for computational social choice
+# New York University 2019
+# Algorithms for Possible Winner computation on partial orders
+
+
+## Imports
+
 from multiprocessing import Pool
+import multiprocessing
 import numpy as np
 import maxflow as mf
-import random 
+import random
 import time
 import sys
-sys.path.append( '/home/vishal/gurobi811/linux64/lib/python3.5_utf32')
+#sys.path.append( '/home/vishal/gurobi811/linux64/lib/python3.5_utf32')
 from gurobipy import *
 from . import nw
 
-## Plurality
+## Possible Winner with Plurality
 
-def get_roots(population,m):
+# Return list of roots of orders in a population.
+# rootsList[i,j] = 1 iff j is a root candidate of voter i.
+
+def getRoots(population,m):
     n = len(population)
-    roots_list = []
+    rootsList = np.ones((n,m))
     for i in range(n):
-        roots_i = [1]*m
-        v = population[i]
-        for x in v:
-            (a,b) =x
-            roots_i[b] = 0
-        roots_list.append(roots_i)
-    return roots_list
+        order = population[i]
+        for (a,b) in order:
+            rootsList[i,b] = 0
+    return rootsList.tolist()
 
-def aggregate_plurality(roots_list,m):
-    dico_roots = dict()
-    tab_roots = []
-    count_roots = []
+# Aggregate similar partial orders for plurality (i.e. partial
+# orders with the same roots list)
+
+def __aggregatePlurality(rootsList,m):
+    dictRoots = dict()
+    tabRoots = []
+    countRoots = []
     i = 0
-    for roots_i in roots_list:
-        if str(roots_i) in dico_roots.keys():
-            count_roots[dico_roots[str(roots_i)]] += 1
-        else:
-            count_roots.append(1)
-            tab_roots.append(roots_i)
-            dico_roots[str(roots_i)] = i
-            i+=1
-    return tab_roots,count_roots
-        
     
-def build_graph_plurality(graph,score_c,count_roots,roots_list,m,c,blocked=[]):
-    P1 = len(count_roots)
-    size = P1 + m - 1
-    nodes = graph.add_nodes(size)
-    for i in range(P1):
-        graph.add_tedge(i,count_roots[i],0)
-        for j in range(m-1):
-            if roots_list[i][j] >0:
-                graph.add_edge(i,P1+j,count_roots[i],0)
-    for i in range(m-1):
-        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
-            graph.add_tedge(P1+i,0,score_c-1)
+    for roots_i in rootsList:
+        if str(roots_i) in dictRoots.keys():
+            # Increment the number of voters with the same roots list
+            countRoots[dictRoots[str(roots_i)]] += 1
         else:
-            graph.add_tedge(P1+i,0,score_c)
-    return size
+            # Add a new kind of voters
+            countRoots.append(1)
+            tabRoots.append(roots_i)
+            dictRoots[str(roots_i)] = i
+            i+=1
+    
+    return tabRoots,countRoots
+        
+# The following code build a graph for the PW plurality algorithm
+# described by Betzler and Dorn.
 
-def try_approx_plurality(score_c,c,count_roots,roots_list,m,blocked=[]):
-    n = len(count_roots)
-    init = [score_c for i in range(m-1)]
+def __buildGraphPlurality(graph,score_c,countRoots,rootsList,m,c,blocked=[]):
+    nbVotersNodes = len(countRoots)
+    size = nbVotersNodes + m - 1
+    
+    #Initialize the graph
+    nodes = graph.add_nodes(size)
+    
+    for i in range(nbVotersNodes):
+        # Add an edge between the source and every voter
+        graph.add_tedge(i,countRoots[i],0)
+        
+        for j in range(m-1):
+            if rootsList[i][j] > 0:
+                # Add an edge between a voter and a candidate if
+                # the candidate is a root for the voter
+                graph.add_edge(i,nbVotersNodes+j,countRoots[i],0)
+    
+    for i in range(m-1):
+        # We add edge for m-1 candidate because we removed the candidate
+        # being tested "c". If "i" is blocked then it cannot be
+        # a co-winner with "c".
+        
+        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
+            graph.add_tedge(nbVotersNodes+i,0,score_c-1)
+        else:
+            graph.add_tedge(nbVotersNodes+i,0,score_c)
+            
+
+# The following code try to build a possible world in which "c" is
+# a winner.
+
+def __tryApproxPlurality(score_c,c,countRoots,rootsList,m,blocked=[]):
+    n = len(countRoots)
+    
+    # Every candidate can earn "score_c" votes but not more
+    votesRemaining = [score_c for i in range(m-1)]
+    
+    # If a candidate is blocked in can earn at most "score_c - 1" votes
     for cand in blocked:
         if cand <c :
-            init[cand] -= 1
+            votesRemaining[cand] -= 1
         elif cand > c:
-            init[cand-1] -= 1
+            votesRemaining[cand-1] -= 1
+    
     for i in range(n):
-        score_tab = list(np.argsort(init))
-        score_tab.reverse()
-        left = count_roots[i]
+        scoreList = list(np.argsort(votesRemaining))
+        scoreList.reverse()
+        # We initialize the number of voters remaining
+        # with the number of voters in the ith bucket
+        nbVotersRemaining = countRoots[i]
+        
+        # We look at the candidate from the one with the lowest
+        # score so far to the one with the highest score so far and
+        # we give the maximum number of point each time until there
+        # is no voters remaining
         for k in range(m-1):
-            j = score_tab[k]
-            if roots_list[i][j] == 1:
-                suppr = min(init[j],left)
-                left -= suppr
-                init[j] -= suppr
-        if left > 0:
+            j = scoreList[k]
+            if rootsList[i][j] == 1:
+                nbVotes = min(votesRemaining[j],nbVotersRemaining)
+                nbVotersRemaining -= nbVotes
+                votesRemaining[j] -= nbVotes
+        if nbVotersRemaining > 0:
+            # If voters cannot vote without making "c" lose, stop
             return False
+    
+    # If every voters voted and "c" still win then return True
     return True
     
         
-        
+# The algorithm to determine if one candidate is a PW with Plurality
 
-def possible_winner_plurality(roots_list,count_roots,m,c,verbose=False,blocked=[]):
-    roots_list_without_c = []
+def pluralityOneCandidate(rootsList,countRoots,m,c,verbose=False,blocked=[]):
+    rootsList_without_c = []
     score_c = 0
-    count_roots_without_c = []
-    maxflow_wanted = 0
-    for i in range(len(roots_list)):
-        if roots_list[i][c] == 1:
-            score_c += count_roots[i]
+    countRoots_without_c = []
+    mawflowWanted = 0
+    
+    # Compute the maximum score of c, the maxflow needed, and
+    # isolate voters who cannot vote for c.
+    for i in range(len(rootsList)):
+        if rootsList[i][c] == 1:
+            score_c += countRoots[i]
         else:
-            l = roots_list[i].copy()
-            l.pop(c)
-            maxflow_wanted += count_roots[i]
-            count_roots_without_c.append(count_roots[i])
-            roots_list_without_c.append(l)
-    if score_c > maxflow_wanted:
+            copyRoots = rootsList[i].copy()
+            copyRoots.pop(c)
+            mawflowWanted += countRoots[i]
+            countRoots_without_c.append(countRoots[i])
+            rootsList_without_c.append(copyRoots)
+            
+    # Take care of trivial cases
+    if score_c > mawflowWanted:
         if verbose:
             print(str(c)+" : Default winner ("+str(score_c)+")")
         return True
-    if score_c < (score_c+maxflow_wanted)/m:
+        
+    if score_c < (score_c+mawflowWanted)/m:
         if verbose:
             print(str(c)+" : Default loser ("+str(score_c)+")")
         return False
-    if try_approx_plurality(score_c,c,count_roots_without_c,roots_list_without_c,m,blocked=blocked):
+    
+    # Try to build a possible world in which c is a winner
+    if __tryApproxPlurality(score_c,c,countRoots_without_c,rootsList_without_c,m,blocked=blocked):
         if verbose:
             print(str(c)+" : Winner with approx")
         return True
+        
+    # If none of the above worked, use Betzler and Dorn algorithm
     graph = mf.GraphInt()
-    size = build_graph_plurality(graph,score_c,count_roots_without_c,roots_list_without_c,m,c,blocked=blocked)
+    __buildGraphPlurality(graph,score_c,countRoots_without_c,rootsList_without_c,m,c,blocked=blocked)
     maxflow = graph.maxflow()
-    if maxflow >= maxflow_wanted:
+    
+    if maxflow >= mawflowWanted:
         if verbose:
             print(str(c)+" : Winner with graph")
         return True
     else:
         if verbose:
-            print(str(c)+" : Loser ("+str(maxflow)+"/"+str(maxflow_wanted)+")")
+            print(str(c)+" : Loser ("+str(maxflow)+"/"+str(mawflowWanted)+")")
         return False
 
 
+# The general algorithm for plurality
 def plurality(population,m,verbose=False):
-    roots_list_net = get_roots(population,m)
-    roots_list,count_roots = aggregate_plurality(roots_list_net,m)
+    rootsList_net = getRoots(population,m)
+    rootsList,countRoots = __aggregatePlurality(rootsList_net,m)
+    
+    # Test every candidate
     winners = []
     for c in range(m):
-        if possible_winner_plurality(roots_list,count_roots,m,c,verbose=verbose):
+        if pluralityOneCandidate(rootsList,countRoots,m,c,verbose=verbose):
             winners.append(c)
+            
     return winners
     
 
 ## Veto
 
 
-
-def get_leaves(population,m):
+# Return list of leaves of orders in a population.
+# rootsList[i,j] = 1 iff j is a leaf candidate of voter i.
+def getLeaves(population,m):
     n = len(population)
-    leaves_list = []
+    leavesList = np.ones((n,m))
     for i in range(n):
-        leaves_i = [1]*m
-        v = population[i]
-        for x in v:
-            (a,b) =x
-            leaves_i[a] = 0
-        leaves_list.append(leaves_i)
-    return leaves_list
+        pairs = population[i]
+        for (a,b) in pairs:
+            leavesList[i,a] = 0
+    return leavesList.tolist()
 
-def aggregate_veto(leaves_list,m):
-    dico_leaves = dict()
-    tab_leaves = []
-    count_leaves = []
+# Aggregate similar partial orders for plurality (i.e. partial
+# orders with the same roots list)
+def __aggregateVeto(leavesList,m):
+    dictLeaves = dict()
+    tabLeaves = []
+    countLeaves = []
     i = 0
-    for leaves_i in leaves_list:
-        if str(leaves_i) in dico_leaves.keys():
-            count_leaves[dico_leaves[str(leaves_i)]] += 1
-        else:
-            count_leaves.append(1)
-            tab_leaves.append(leaves_i)
-            dico_leaves[str(leaves_i)] = i
-            i+=1
-    return tab_leaves,count_leaves
-        
     
-def build_graph_veto(graph,zero_c,count_leaves,leaves_list,m,c,blocked=[]):
-    P1 = len(count_leaves)
-    size = P1 + m - 1
-    nodes = graph.add_nodes(size)
-    for i in range(P1):
-        graph.add_tedge(i,count_leaves[i],0)
-        for j in range(m-1):
-            if leaves_list[i][j] >0:
-                graph.add_edge(i,P1+j,count_leaves[i],0)
-    for i in range(m-1):
-        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
-            graph.add_tedge(P1+i,0,zero_c+1)
+    for leaves_i in leavesList:
+        if str(leaves_i) in dictLeaves.keys():
+            countLeaves[dictLeaves[str(leaves_i)]] += 1
         else:
-            graph.add_tedge(P1+i,0,zero_c)
-    return size
+            countLeaves.append(1)
+            tabLeaves.append(leaves_i)
+            dictLeaves[str(leaves_i)] = i
+            i+=1
+    
+    return tabLeaves,countLeaves
+        
 
-def try_approx_veto(zero_c,c,count_leaves,leaves_list,m,blocked=[]):
-    n = len(count_leaves)
-    init = [zero_c for i in range(m-1)]
+# The following code build a graph for the PW veto algorithm
+# described by Betzler and Dorn.
+
+def __buildGraphVeto(graph,zero_c,countLeaves,leavesList,m,c,blocked=[]):
+    nbVotersNodes = len(countLeaves)
+    size = nbVotersNodes + m - 1
+    
+    #Initialize the graph
+    nodes = graph.add_nodes(size)
+    
+    for i in range(nbVotersNodes):
+        
+        # Add an edge between the source and every voter
+        graph.add_tedge(i,countLeaves[i],0)
+        
+        for j in range(m-1):
+            if leavesList[i][j] >0:
+                # Add an edge between a voter and a candidate if
+                # the candidate is a root for the voter
+                graph.add_edge(i,nbVotersNodes+j,countLeaves[i],0)
+    for i in range(m-1):
+        # We add edge for m-1 candidate because we removed the candidate
+        # being tested "c". If "i" is blocked then it cannot be
+        # a co-winner with "c".
+        
+        if (i < c and i in blocked) or (i >= c and (i+1) in blocked):
+            graph.add_tedge(nbVotersNodes+i,0,zero_c+1)
+        else:
+            graph.add_tedge(nbVotersNodes+i,0,zero_c)
+    
+
+    
+# The following code try to build a possible world in which "c" is
+# not a loser.
+
+def __tryApproxVeto(zero_c,c,countLeaves,leavesList,m,blocked=[]):
+    n = len(countLeaves)
+    
+    # Every candidate must obtain at least "zero_c" vetos
+    vetosRemaining = [zero_c for i in range(m-1)]
+    
+    # If a candidate is blocked it must obtain more than "zero_c" vetos
     for cand in blocked:
         if cand < c:
-            init[cand] += 1
+            vetosRemaining[cand] += 1
         else:
-            init[cand-1] += 1
+            vetosRemaining[cand-1] += 1
+    
     for i in range(n):
-        score_tab = list(np.argsort(init))
-        score_tab.reverse()
-        if np.max(init) <= 0:
+        scoreList = list(np.argsort(vetosRemaining))
+        scoreList.reverse()
+        
+        # If every other candidate have more vetos than "c", stop
+        if np.max(vetosRemaining) <= 0:
             return True
-        left = count_leaves[i]
+            
+        # We initialize the number of voters remaining
+        # with the number of voters in the ith bucket
+        nbVotersRemaining = countLeaves[i]
         for k in range(m-1):
-            j = score_tab[k]
-            if leaves_list[i][j] == 1:
-                suppr = min(init[j],left)
-                left -= suppr
-                init[j] -= suppr
-    if np.max(init) <=0:
+            j = scoreList[k]
+            if leavesList[i][j] == 1:
+                nbVetos = min(vetosRemaining[j],nbVotersRemaining)
+                nbVotersRemaining -= nbVetos
+                vetosRemaining[j] -= nbVetos
+                
+    if np.max(vetosRemaining) <=0:
         return True
     else:
         return False
     
-        
-        
 
-def possible_winner_veto(leaves_list,count_leaves,m,c,n,verbose=False,blocked=[]):
-    leaves_list_without_c = []
+# The algorithm to determine if one candidate is a PW with Veto
+
+def vetoOneCandidate(leavesList,countLeaves,m,c,n,verbose=False,blocked=[]):
+    leavesList_without_c = []
     zero_c = 0
-    count_leaves_without_c = []
-    maxflow_wanted = 0
-    for i in range(len(leaves_list)):
-        if leaves_list[i][c] == 1 and np.sum(leaves_list[i]) == 1:
-            zero_c += count_leaves[i]
+    countLeaves_without_c = []
+    
+    # We compute the minimal number of Veto on 'c' and the Maxflow needed
+    # for the graph.
+    for i in range(len(leavesList)):
+        if leavesList[i][c] == 1 and np.sum(leavesList[i]) == 1:
+            zero_c += countLeaves[i]
         else:
-            l = leaves_list[i].copy()
+            l = leavesList[i].copy()
             l.pop(c)
-            count_leaves_without_c.append(count_leaves[i])
-            leaves_list_without_c.append(l)
-    maxflow_wanted = zero_c*(m-1)
+            countLeaves_without_c.append(countLeaves[i])
+            leavesList_without_c.append(l)
+    mawflowWanted = zero_c*(m-1)
+    
+    # We take care of the trivial case
     if zero_c > n/2:
         if verbose:
             print(str(c)+" : Default loser ("+str(zero_c)+")")
         return False
-    if try_approx_veto(zero_c,c,count_leaves_without_c,leaves_list_without_c,m,blocked=blocked):
+    
+    # We try to build a possible world in which c is not a loser
+    if __tryApproxVeto(zero_c,c,countLeaves_without_c,leavesList_without_c,m,blocked=blocked):
         if verbose:
             print(str(c)+" : Winner with approx")
         return True
+    
+    # We use Betzler and Dorn algorithm and Build a Graph
     graph = mf.GraphInt()
-    size = build_graph_veto(graph,zero_c,count_leaves_without_c,leaves_list_without_c,m,c,blocked=blocked)
+    __buildGraphVeto(graph,zero_c,countLeaves_without_c,leavesList_without_c,m,c,blocked=blocked)
     maxflow = graph.maxflow()
-    if maxflow >= maxflow_wanted:
+    
+    if maxflow >= mawflowWanted:
         if verbose:
             print(str(c)+" : Winner with graph")
         return True
     else:
         if verbose:
-            print(str(c)+" : Loser ("+str(maxflow)+"/"+str(maxflow_wanted)+")")
+            print(str(c)+" : Loser ("+str(maxflow)+"/"+str(mawflowWanted)+")")
         return False
 
+# The PW for Veto
 
 def veto(population,m,verbose=False):
-    leaves_list_net = get_leaves(population,m)
-    leaves_list,count_leaves = aggregate_veto(leaves_list_net,m)
+    leavesList_net = getLeaves(population,m)
+    leavesList,countLeaves = __aggregateVeto(leavesList_net,m)
     winners = []
+    
     for c in range(m):
-        if possible_winner_veto(leaves_list,count_leaves,m,c,len(population),verbose=verbose):
+        if vetoOneCandidate(leavesList,countLeaves,m,c,len(population),verbose=verbose):
             winners.append(c)
+    
     return winners
     
-##pw partitioned
+##K-approval in the Partitioned Preferences case
 
-def poset2partitioned(poset,m):
-    childs = [[] for i in range(m)]
-    is_roots = [1]*m
+# This function convert partial order to partitioned preferences
+def __posetToPartitioned(poset,m):
+    # Get roots of the preferences
+    children = [[] for i in range(m)]
+    isRoot = np.ones(m)
     for (a,b) in poset:
-        childs[a].append(b)
-        is_roots[b] = 0
+        children[a].append(b)
+        isRoot[b] = 0
     roots = []
     for i in range(m):
-        if is_roots[i] == 1:
+        if isRoot[i] == 1:
             roots.append(i)
     
+    # Create partitioned preferences
     current_rank = 0
     queue = roots.copy()
-    partitioned = []
+    partitionedPreferences = []
     while queue != []:
-        partitioned.append(queue)
+        partitionedPreferences.append(queue)
         c0 = queue[0]
-        queue = childs[c0].copy()
-    return partitioned
-    
+        queue = children[c0].copy()
+        
+    return partitionedPreferences
 
-def remaining_cand(partitioned,k,scores,m):
-    seen = len(partitioned[0])
+# This function compute the set of candidate for which we must decide if we give a point or not
+def __remainingCandidate(partitioned,k,scores,m):
+    candidatseSeen = len(partitioned[0])
     j = 0
-    while seen <= k:
+    while candidatseSeen <= k:
+        # Add 1 to candidate in top-k positions
         for cand in partitioned[j]:
             scores[cand] += 1
+        
         j +=1
-        seen += len(partitioned[j])
-    n_remaining = len(partitioned[j])-(seen-k)
-    return n_remaining,partitioned[j]
+        candidatseSeen += len(partitioned[j])
     
-def kapp_partitioned_cand(c,graphs_info,min_scores,m):
-    n = len(graphs_info)
+    # Return the number of candidate in the block for whom we
+    # will decrease their score
+    n_remaining = len(partitioned[j])-(candidatseSeen-k)
+    return n_remaining,partitioned[j]
+
+# This function solve the PW problem for K-approval in case of partitioned preferneces
+def kappPartitionedOneCand(c,graphsInfos,minScores,m):
+    n = len(graphsInfos)
+    score_c = minScores[c]
+    maxflowNeeded = 0
+
     graph = mf.GraphInt()
     graph.add_nodes(n+m)
-    score_c = min_scores[c]
-    total_needed = 0
+    
     for i in range(n):
-        n_remaining,set_remaining = graphs_info[i]
-        if c in set_remaining and n_remaining>0:
+        n_remaining,setRemaining = graphsInfos[i]
+        # If we can vote for 'c' we vote for it
+        if c in setRemaining and n_remaining>0:
             score_c += 1
             n_remaining -= 1
-        total_needed += n_remaining
+        
+        maxflowNeeded += n_remaining
+        
+        # We add an edge between the source and the voter
         graph.add_tedge(i,n_remaining,0)
-        for cand in set_remaining:
+        
+        # We add an edge between the voter and candidates
+        # to which it can give a point
+        for cand in setRemaining:
             if cand != c:
                 graph.add_edge(i,n+cand,1,0)
+    
     for cand in range(m):
         if cand != c:
-            graph.add_tedge(n+cand,0,score_c-min_scores[cand])
+            # We add an edge between each candidate different
+            # than c and the target
+            graph.add_tedge(n+cand,0,score_c-minScores[cand])
+            
+    # Run maxflow algorithm
     maxflow = graph.maxflow()
-    return maxflow == total_needed
+    
+    return maxflow == maxflowNeeded
     
 
-
-def kapp_partitioned(P,m,k,list=[]):
-    min_scores = [0]*m
-    graphs_info = []
+# The algorithm for PW for partitioned preferences and k-approval
+def kappPartitioned(P,m,k,list=[]):
+    minScores = [0]*m
+    graphsInfos = []
+    
+    # Extract information from poset
     for poset in P:
-        partitioned = poset2partitioned(poset,m)
-        graphs_info.append(remaining_cand(partitioned,k,min_scores,m))
-    pw = []
+        partitioned = __posetToPartitioned(poset,m)
+        graphsInfos.append(__remainingCandidate(partitioned,k,minScores,m))
+    
+    # Get every PW
     if list == []:
         list = [i for i in range(m)]
+    pw = []
     for cand in list:
-        if kapp_partitioned_cand(cand,graphs_info,min_scores,m):
+        if kappPartitionedOneCand(cand,graphsInfos,minScores,m):
             pw.append(cand)
     return pw
 
-## Approx borda
+## Approximate set of PW for Borda
 
-
-
-def max_rank_approx(U,D,m,c,rule,danger=[],danger_weights=[],verbose=False,blocked=[]):
+def __maxRankApprox(upList,downList,m,c,rule,danger=[],danger_weights=[],verbose=False,blocked=[]):
+    n = len(upList)
+    
+    # If there is no weights for dangerous opponent, give them all a weight of 1
     if danger_weights ==[]:
         danger_weights = [1]*len(danger)
-    n = len(U)
-    index_order = [i for i in range(n)]
-    np.random.shuffle(index_order)
+    
+    # Initialize all the scores
     score = np.zeros(m)
+    
+    # Initialize the order in which we see the voters
+    indexOrder = [i for i in range(n)]
+    np.random.shuffle(indexOrder)
+  
     for i in range(n):
-        new_index = index_order[i]
-        given = [0 for i in range(m)]
+        newIndex = indexOrder[i]
         
-        Up_c = []
-        Down_c = []
-        free_list = []
-        free_score = []
+        # number of points given to ith candidate
+        pointsGiven = [0 for i in range(m)]
+        
+        # Which candidate are in Up(c), Down(c) and Independent(c)
+        up_c = []
+        down_c = []
+        independent_c = []
+        independentScore = []
         for j in range(m):
             if j!=c:
-                if j in U[new_index][c]:
-                    Up_c.append(j)
-                elif j in D[new_index][c]:
-                    Down_c.append(j)
+                if j in upList[newIndex][c]:
+                    up_c.append(j)
+                elif j in downList[c][newIndex]:
+                    down_c.append(j)
                 else:
-                    free_list.append(j)
-                    free_score.append(score[j])
-        argscore_free = np.argsort(free_score)
-        argscore_free = argscore_free[::-1]
-        j_incr = len(free_list)
-        for j in range(len(danger)):
-            w = danger[j]
-
-            if w not in Down_c and w in free_list:
-                place_needed = 0
-                for child_w in D[new_index][w]:
-                    if child_w not in Down_c and child_w != c:
-                        place_needed += 1
-                if j_incr -place_needed >=0 :
-                    for child_w in D[new_index][w]:
-                        if child_w not in Down_c and child_w != c:
-                            Down_c.append(child_w)
-                    j_incr -= place_needed
-        rank_c = len(U[new_index][c])-1
-        free_cand = 0
+                    independent_c.append(j)
+                    independentScore.append(score[j])
         
-        while rank_c < (m-len(D[new_index][c])-(len(free_list)-j_incr)) and rule[rank_c] == rule[rank_c+1]:
+        remainingSpace = len(independent_c)
+        
+        # Look at dangerous candidates
+        for j in range(len(danger)):
+            dangerousCandidate = danger[j]
+
+            if dangerousCandidate in independent_c:
+                # spaceNeeded is the number of candidate in Down(danger)
+                # and not in Down(c)
+                spaceNeeded = 0
+                for child_w in downList[dangerousCandidate][newIndex]:
+                    if child_w not in down_c:
+                        spaceNeeded += 1
+                    
+                # If we can, we push the dangerous candidate and every
+                # candidate < to it in Down(c)
+                if remainingSpace - spaceNeeded >=0 :
+                    for child_w in downList[dangerousCandidate][newIndex]:
+                        if child_w not in down_c:
+                            down_c.append(child_w)
+                    remainingSpace -= spaceNeeded
+        
+        # Get the minimum rank of c
+        rank_c = len(upList[newIndex][c])-1
+        
+        # We maximize the rank of c but maximize in the same time its score (useful for k-approval for instance)
+        freedSpace = 0
+        while rank_c < (m-len(downList[c][newIndex])-(len(independent_c)-remainingSpace)) and rule[rank_c] == rule[rank_c+1]:
             rank_c += 1
-            free_cand += 1
-        score_c = rule[rank_c]
-        given[c] = score_c
-        j_incr = j_incr-free_cand
-        for j in range(len(free_list)):
+            freedSpace += 1
+        remainingSpace = remainingSpace-freedSpace
             
-            w = free_list[argscore_free[j]]
-            if j_incr == 0 and w not in Down_c:
-                Up_c.append(w)
-            elif w not in Down_c:
-                place_needed = 0
-                for child_w in D[new_index][w]:
-                    if child_w not in Down_c:
-                        place_needed += 1
-                if j_incr -place_needed >=0 :
-                    for child_w in D[new_index][w]:
-                        if child_w not in Down_c:
-                            Down_c.append(child_w)
-                    j_incr -= place_needed
+        # Get the score of c
+        pointsGiven[c] = rule[rank_c]
+        
+        # Sort candidates in Independent(c) depending on their score so far
+        # The most dangerous candidates appear first
+        independentArgsorted = np.argsort(independentScore)[::-1]
+        
+        # Determine wether we put independent candidate before or after c
+        for j in range(len(independent_c)):
+            independantCand = independent_c[independentArgsorted[j]]
+            # If there is no space left, then put the candidate in Up
+            if remainingSpace == 0 and independantCand not in down_c:
+                up_c.append(independantCand)
+            # Otherwise, we look if we can put it and its children in Down(c)
+            elif independantCand not in down_c:
+                spaceNeeded = 0
+                for child_w in downList[independantCand][newIndex]:
+                    if child_w not in down_c:
+                        spaceNeeded += 1
+                if remainingSpace -spaceNeeded >=0 :
+                    for child_w in downList[independantCand][newIndex]:
+                        if child_w not in down_c:
+                            down_c.append(child_w)
+                    remainingSpace -= spaceNeeded
                 else:
-                    Up_c.append(free_list[argscore_free[j]])
-        danger_child = [[] for i in range(m)]
-        for dangerous_candidate in danger:
-            for dangerous_child in D[new_index][dangerous_candidate]:
-                danger_child[dangerous_child].append(dangerous_candidate)
-            
+                    up_c.append(independent_c[independentArgsorted[j]])
+        
+        # We keep in mind children of dangerous candidate and of which candidate
+        # they are a child.
+        dangerousParent = [[] for i in range(m)]
+        for dangerousCandidate in danger:
+            for dangerousChild in downList[dangerousCandidate][newIndex]:
+                dangerousParent[dangerousChild].append(dangerousCandidate)
+        
+        # We compute the list of parents of candidates in Down(c) because
+        # we are starting from c and going down in the tree and 
+        # we compute the list of children of candidates in Up(c) because
+        # we are going up in the tree.
         parents = [[] for i in range(m)]
-        child = [[] for i in range(m)]
-        parents_count = [0 for i in range(m)]
-        child_count = [0 for i in range(m)]
+        children = [[] for i in range(m)]
+        parentsCount = [0 for i in range(m)]
+        childrenCount = [0 for i in range(m)]
         for j in range(m):
-            if j in Up_c:
-                for elem in D[new_index][j]:
-                    if elem in Up_c and elem != j:
+            if j in up_c:
+                for elem in downList[j][newIndex]:
+                    if elem in up_c and elem != j:
                         parents[elem].append(j)
-                        child_count[j] += 1
-            elif j in Down_c:
-                for elem in U[new_index][j]:
-                    if elem in Down_c and elem != j:
-                        child[elem].append(j) 
-                        parents_count[j] += 1
-        orphan_down = []
-        for j in Down_c:
-            if parents_count[j] == 0:
-                orphan_down.append(j)
-        orphan_up = []
-        for j in Up_c:
-            if child_count[j] == 0:
-                orphan_up.append(j)
-        queue_down = orphan_down
-        rank_down = rank_c+1
-        while queue_down != []:
+                        childrenCount[j] += 1
+            elif j in down_c:
+                for elem in upList[newIndex][j]:
+                    if elem in down_c and elem != j:
+                        children[elem].append(j) 
+                        parentsCount[j] += 1
+        
+        # We compute the list of candidate without parents
+        # which are in Down(c)
+        orphanDown = []
+        for j in down_c:
+            if parentsCount[j] == 0:
+                orphanDown.append(j)
+        
+        # We compute the list of candidate without children
+        # which are in Up(c)
+        orphanUp = []
+        for j in up_c:
+            if childrenCount[j] == 0:
+                orphanUp.append(j)
+        
+        # We assign ranks for candidates < c, i.e. candidates in Down(c)
+        # We start with candidate with no parents in Down(c) and we go down in
+        # the tree. At each step, we consider candidates in Down(c) such that all
+        # their parents in down(c) have already been ranked.
+        queueDown = orphanDown
+        currentRank = rank_c+1
+        while queueDown != []:
             if len(danger) == 0:
-                minqueue = score[queue_down[0]]
-                candmin = 0
-                for j in range(1,len(queue_down)):
-                    w = queue_down[j]
-                    if score[w] < minqueue:
-                        minqueue = score[w]
-                        candmin = j
+                # If there is no dangerous candidate, we select
+                # the candidate with the minimal score so far
+                scoreDown = [score[i] for i in queueDown]
+                candMin = np.argmin(scoreDown)
                 
             else:
-                minqueue = score[queue_down[0]]
-                candmin = 0
-                danger_not_in = (queue_down[0] in danger)
-                for j in range(1,len(queue_down)):
-                    w = queue_down[j]
-                    if (w not in danger) and (danger_not_in):
-                        minqueue = score[w]
-                        candmin = j
-                        danger_not_in = False
-                    elif score[w] < minqueue and ((w not in danger) or danger_not_in):
-                        minqueue = score[w]
-                        candmin = j
-            w_min = queue_down[candmin]
-            queue_down.pop(candmin)
-            given[w_min] = rule[rank_down]
-            rank_down += 1
-            for child_w in child[w_min]:
-                parents_count[child_w] -= 1
-                if parents_count[child_w] == 0:
-                    queue_down.append(child_w)
-                    
-        queue_up = orphan_up
-        rank_up = rank_c-1
-        while queue_up != []:
+                # Otherwise, we select in priority candidates
+                # which seems not dangerous.
+                scoreDownNotDangerous = [(score[i],index) for index,i in enumerate(queueDown) if i not in danger]
+                if len(scoreDownNotDangerous) == 0:
+                    scoreDown = [score[i] for i in queueDown]
+                    candMin = np.argmin(scoreDown)
+                else:
+                    candMin = min(scoreDownNotDangerous)[1]
+            
+            # We get the candidate, remove it from the queue and continue
+            selectedCandidate = queueDown[candMin]
+            queueDown.pop(candMin)
+            pointsGiven[selectedCandidate] = rule[currentRank]
+            currentRank += 1
+            
+            # We add candidates in the queue if all their parents in Down(c)
+            # are already ranked
+            for child_w in children[selectedCandidate]:
+                parentsCount[child_w] -= 1
+                if parentsCount[child_w] == 0:
+                    queueDown.append(child_w)
+               
+        # We assign ranks for candidates > c, i.e. candidates in Up(c)
+        # We start with candidate with no children in Up(c) and we go up in
+        # the tree. At each step, we consider candidates in Up(c) such that all
+        # their children in Upf(c) have already been ranked.     
+        queueUp = orphanUp
+        rankUp = rank_c-1
+        while queueUp != []:
             if len(danger) == 0:
-                maxqueue = score[queue_up[0]]
-                candmax = 0
-                for j in range(1,len(queue_up)):
-                    w = queue_up[j]
-                    if score[w] > maxqueue:
-                        maxqueue = score[w]
-                        candmax = j
+                # If there is no dangerous candidate, we select
+                # the candidate with the maximal score so far
+                scoreUp = [score[i] for i in queueUp]
+                candMax = np.argmax(scoreUp)
             else:
-                maxqueue = score[queue_up[0]]
-                candmax = 0
-                danger_in = (queue_up[0] in danger)
-                max_danger = len(danger_child[queue_up[0]])
-                maxqueue_danger = 0
-                for j in range(max_danger):
-                    maxqueue_danger += score[danger_child[queue_up[0]][j]]
+                # Otherwise, we select in priority candidates
+                # which seems dangerous.
+                scoreUpDangerous = [(score[i],index) for index,i in enumerate(queueUp) if i in danger]
+                if len(scoreUpDangerous) > 0:
+                    candMax = max(scoreUpDangerous)[1]
+                else:
+                    scoreUp = [(len(dangerousParent[i]),np.sum(np.array(score)[dangerousParent[i]]),score[i],index) for index,i in enumerate(queueUp)]
+                    candMax = max(scoreUp)[-1]
                     
-                for j in range(1,len(queue_up)):
-                    w = queue_up[j]
-                    if (not(danger_in) and (w in danger)):
-                        maxqueue = score[w]
-                        candmax = j
-                        danger_in = True
-                    elif (len(danger_child[w]) > max_danger):
-                        maxqueue = score[w]
-                        candmax = j
-                        max_danger = len(danger_child[w])
-                        maxqueue_danger = 0
-                        for j2 in range(len(danger_child[w])):
-                            maxqueue_danger += score[danger_child[w][j2]]
-                    elif (len(danger_child[w]) > 0) and (len(danger_child) == max_danger):
-                        maxqueue_danger_w = 0
-                        for j2 in range(max_danger):
-                            maxqueue_danger_w += score[danger_child[w][j2]]
-                        if maxqueue_danger_w > maxqueue_danger:
-                            maxqueue = score[w]
-                            candmax = j
-                            maxqueue_danger = maxqueue_danger_w
-                    elif (score[w] > maxqueue and (w in danger or (not(danger_in) and  max_danger == 0))):
-                        maxqueue = score[w]
-                        candmax = j
-            w_max = queue_up[candmax]
-            queue_up.pop(candmax)
-            given[w_max] = rule[rank_up]
-            rank_up -= 1
+            
+             # We get the candidate, remove it from the queue and continue
+            w_max = queueUp[candMax]
+            queueUp.pop(candMax)
+            pointsGiven[w_max] = rule[rankUp]
+            rankUp -= 1
+            
+            # We add candidates in the queue if all their children in Up(c)
+            # are already ranked
             for parents_w in parents[w_max]:
-                child_count[parents_w] -= 1
-                if child_count[parents_w] == 0:
-                    queue_up.append(parents_w)        
-        score += given
-    maxscore = np.max(score)
-    if score[c] == maxscore:
-        for cand_blocked in blocked:
-            if score[cand_blocked] == maxscore:
-                return False,cand_blocked
-        count_max = 0
+                childrenCount[parents_w] -= 1
+                if childrenCount[parents_w] == 0:
+                    queueUp.append(parents_w)   
+                    
+        # We increment the score of all the candidates
+        score += pointsGiven
+    
+    # We get the maximum score and check if c has the best score, i.e. is a winner
+    maxScore = np.max(score)
+    if score[c] == maxScore:
+        # We check if blocked candidate have no more than c
+        for candBlocked in blocked:
+            if score[candBlocked] == maxScore:
+                # c is not a winner in this situation, because of candidate blocked
+                return False,candBlocked
+        
+        # We count the number of candidate with the same score
+        countMax = 0
         for i in range(m):
-            if score[i] == maxscore:
-                count_max += 1
-        return True,count_max
+            if score[i] == maxScore:
+                countMax += 1
+        # c is a winner, with countMax - 1 cowinners
+        return True,countMax
+    
+    # If c not a winner, print the winner and its score (if verbose), and return
+    # the candidate with the maximum score
     if verbose:
         print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
         if len(danger) > 0:
             print("Were minimized : "+str(danger))
-    return False  ,np.argmax(score) 
+    
+    return False,np.argmax(score) 
+    
 
-    
-    
-    
-    
-    
-def random_choice_approx(U,D,m,c,rule,danger=[],verbose=False,blocked=[]):
-    n = len(U)
-    index_order = [i for i in range(n)]
-    np.random.shuffle(index_order)
-    score = np.zeros(m)
+# This function simulate a competition between one candidate (score mximized) and
+# 2 opponents (score minimized), but we try to minimize the minimal score of 
+# the opponent and we count the number of 
+def __competitionKapp1v2(k,candTested_list,opponent,upList,downList,m): 
+    [cand1,cand2] = candTested_list
+    n = len(upList)
+    pointsFilled = 0
     for i in range(n):
-        new_index = index_order[i]
-        given = [0 for i in range(m)]
-        
-        Up_c = []
-        Down_c = []
-        free_list = []
-        free_score = []
-        for j in range(m):
-            if j!=c:
-                if j in U[new_index][c]:
-                    Up_c.append(j)
-                elif j in D[new_index][c]:
-                    Down_c.append(j)
-                else:
-                    free_list.append(j)
-                    free_score.append(score[j])
-        argscore_free = np.argsort(free_score)
-        argscore_free = argscore_free[::-1]
-        j_incr = len(free_list)
-        for j in range(len(danger)):
-            w = danger[j]
-
-            if w not in Down_c and w in free_list:
-                place_needed = 0
-                for child_w in D[new_index][w]:
-                    if child_w not in Down_c and child_w != c:
-                        place_needed += 1
-                if j_incr -place_needed >=0 :
-                    for child_w in D[new_index][w]:
-                        if child_w not in Down_c and child_w != c:
-                            Down_c.append(child_w)
-                    j_incr -= place_needed
-        rank_c = len(U[new_index][c])-1
-        free_cand = 0
-        
-        while rank_c < (m-len(D[new_index][c])-(len(free_list)-j_incr)) and rule[rank_c] == rule[rank_c+1]:
-            rank_c += 1
-            free_cand += 1
-        score_c = rule[rank_c]
-        given[c] = score_c
-        j_incr = j_incr-free_cand
-        for j in range(len(free_list)):
-            
-            w = free_list[argscore_free[j]]
-            if j_incr == 0 and w not in Down_c:
-                Up_c.append(w)
-            elif w not in Down_c:
-                place_needed = 0
-                for child_w in D[new_index][w]:
-                    if child_w not in Down_c:
-                        place_needed += 1
-                if j_incr -place_needed >=0 :
-                    for child_w in D[new_index][w]:
-                        if child_w not in Down_c:
-                            Down_c.append(child_w)
-                    j_incr -= place_needed
-                else:
-                    Up_c.append(free_list[argscore_free[j]])
-        danger_child = [[] for i in range(m)]
-        for dangerous_candidate in danger:
-            for dangerous_child in D[new_index][dangerous_candidate]:
-                danger_child[dangerous_child].append(dangerous_candidate)
-            
-        parents = [[] for i in range(m)]
-        child = [[] for i in range(m)]
-        parents_count = [0 for i in range(m)]
-        child_count = [0 for i in range(m)]
-        for j in range(m):
-            if j in Up_c:
-                for elem in D[new_index][j]:
-                    if elem in Up_c and elem != j:
-                        parents[elem].append(j)
-                        child_count[j] += 1
-            elif j in Down_c:
-                for elem in U[new_index][j]:
-                    if elem in Down_c and elem != j:
-                        child[elem].append(j) 
-                        parents_count[j] += 1
-        orphan_down = []
-        for j in Down_c:
-            if parents_count[j] == 0:
-                orphan_down.append(j)
-        orphan_up = []
-        for j in Up_c:
-            if child_count[j] == 0:
-                orphan_up.append(j)
-        queue_down = orphan_down
-        rank_down = rank_c+1
-        minscore = np.min(score)
-        maxscore = np.max(score)
-        proba = [1/(score[j]-minscore+1) for j in range(m)]
-        while queue_down != []:
-            proba_i = [proba[j] for j in queue_down]
-            for cand_w in range(len(queue_down)):
-                if queue_down[cand_w] in danger:
-                    proba_i[cand_w] *= 0.00000001
-                proba_i[cand_w] /= max(len(danger_child[queue_down[cand_w]]),1)
-            candmin = random.choices([i for i in range(len(queue_down))],proba_i)[0]
-            w_min = queue_down[candmin]
-            queue_down.pop(candmin)
-            given[w_min] = rule[rank_down]
-            rank_down += 1
-            for child_w in child[w_min]:
-                parents_count[child_w] -= 1
-                if parents_count[child_w] == 0:
-                    queue_down.append(child_w)
-                    
-        queue_up = orphan_up
-        rank_up = rank_c-1
-        proba = [1/(maxscore+1-score[j]) for j in range(m)]
-        while queue_up != []:
-            proba_i = [proba[j] for j in queue_up]
-            for cand_w in range(len(queue_up)):
-                if queue_up[cand_w] in danger:
-                    proba_i[cand_w] += 1
-                proba_i[cand_w] += len(danger_child[queue_up[cand_w]])/m
-            candmax = random.choices([i for i in range(len(queue_up))],proba_i)[0]
-            w_max = queue_up[candmax]
-            queue_up.pop(candmax)
-            given[w_max] = rule[rank_up]
-            rank_up -= 1
-            for parents_w in parents[w_max]:
-                child_count[parents_w] -= 1
-                if child_count[parents_w] == 0:
-                    queue_up.append(parents_w)        
-        score += given
-    maxscore = np.max(score)
-    if score[c] == maxscore:
-        for cand_blocked in blocked:
-            if score[cand_blocked] == maxscore:
-                return False,cand_blocked
-        count_max = 0
-        for i in range(m):
-            if score[i] == maxscore:
-                count_max += 1
-        return True,count_max
-    if verbose:
-        print("The maximum is not "+str(c)+" ("+str(score[c])+") but "+str(np.argmax(score))+" ("+str(np.max(score))+")")
-        if len(danger) > 0:
-            print("Were minimized : "+str(danger))
-    return False  ,np.argmax(score)            
-    
-
-def s3_kapp_O_level_2(k,c_list,w,U,D,m): 
-    [c1,c2] = c_list
-    n = len(U)
-    score_w = 0
-    score_combl = 0
-    for i in range(n):
-        minpos_w = len(U[i][w])
-        maxpos_c1 = m-len(D[i][c1])+1
-        maxpos_c2 = m-len(D[i][c2])+1
-        maxpos_c12 = m-len(set(D[i][c1]+D[i][c2]))+  1
-        c1_in = c1 in U[i][w]
-        c2_in = c2 in U[i][w]
-        if c1_in or c2_in:
-            if minpos_w > k and maxpos_c1 > k and maxpos_c2 > k and maxpos_c12 <= k:
-                score_combl += 1
+        minposOpponent = len(upList[i][opponent])
+        maxposCand1 = m-len(downList[cand1][i])+1
+        maxposCand2 = m-len(downList[cand2][i])+1
+        maxposSCand = m-len(set(downList[cand1][i]+downList[cand2][i]))+  1
+        isCand1Up = cand1 in upList[i][opponent]
+        isCand2Up = cand2 in upList[i][opponent]
+        if isCand1Up or isCand2Up:
+            if minposOpponent > k and maxposCand1 > k and maxposCand2 > k and maxposSCand <= k:
+                pointsFilled += 1
         else:
-            if maxpos_c1 > k and maxpos_c2 > k and maxpos_c12 <= k:
-                score_combl += 1
-    return score_combl
+            if maxposCand1 > k and maxposCand2 > k and maxposSCand <= k:
+                pointsFilled += 1
+    return pointsFilled
     
     
-
-def pw_pruning(population,m,rule,type=0,verbose=False,max_competition=10):
-    if type == 2:
-        kapp = int(np.sum(rule))
-    M = nw.precompute_score(rule,m)
-    lup = [0 for i in range(m)]
-    U = []
-    D = []
-    total_score = np.sum(rule)*len(population)
-    maximum_score = np.max(rule)*len(population)
-    for i in range(len(population)):
-        P = [[] for i in range(m)]
-        C = [[] for i in range(m)]
-        for (a,b) in population[i]:
-            P[b].append(a)
-            C[a].append(b)
-        roots = []
-        for j in range(m):
-            if len(P[j]) == 0:
-                roots.append(j)
-        U_i = nw.s1_psr_O(C,P,roots,m,lup,rule)
-        U.append(U_i)
-        D_i = [[] for i in range(m)]
-        for elem_down in range(m):
-            for elem_up in U_i[elem_down]:
-                D_i[elem_up].append(elem_down)
-        D.append(D_i)
-    arglup = np.argsort(lup)
-    possible_winners = []
-    for i in range(m):
-        matrix_score = np.ones(m)*np.inf
-        w = arglup[i]
-        max_w = maximum_score-lup[w]
-        if max_w < (total_score-max_w)/(m-1): 
-            if verbose:
-                print(str(w)+" : Default Loser")
-        elif max_w > (total_score)/2:
-            if verbose:
-                print(str(w)+" : Default Winner")
-            default_winners.append(w)
-            possible_winners.append(w)
-        elif max_w == maximum_score-arglup[0]:
-            if verbose:
-                print(str(w)+" : Default Winner")
-            default_winners.append(w)
-            possible_winners.append(w)
-        else:
-            is_a_PW = True
-            count_compet = 0
-            for c in possible_winners:
-                if count_compet == max_competition:
-                    break
-                else:
-                    count_compet += 1
-                score_w,score_c = nw.s3_psr_O(rule,M,c,w,U,D,m)
-                matrix_score[c] = score_w-score_c
-                if verbose:
-                    print("Test "+str(c)+" ("+str(score_c)+") against "+str(w)+" ("+str(score_w)+")")
-                if score_w < score_c:
-                    is_a_PW = False
-                    break
-            if is_a_PW:
-                cont = True
-                if len(possible_winners) > 1 and type==2:
-                    arg_opponents = np.argsort(matrix_score)
-                    c_list = list(arg_opponents[:2])
-                    c2 = c_list[1]
-                    j = 2
-                    while matrix_score[arg_opponents[j]] == matrix_score[c2]:
-                        c_list.append(arg_opponents[j])
-                        j += 1
-                    for i_c_1 in range(len(c_list)):
-                        for i_c_2 in range(i_c_1+1,len(c_list)):
-                            c1 = c_list[i_c_1]
-                            c2 = c_list[i_c_2]
-                            score_to_combl = matrix_score[c1]+matrix_score[c2]
-                            score_combl = s3_kapp_O_level_2(kapp,[c1,c2],w,U,D,m)
-                            if verbose:
-                                print(str(w)+" vs "+" : "+str(c1)+","+str(c2)+" --> ("+str(score_combl)+"/"+str(score_to_combl)+")")
-                            if score_combl > score_to_combl:
-                                cont = False
-                if cont:
-                    possible_winners.append(w)
-                    
-    cand_to_test = []
-    for cand in possible_winners:
-        if cand not in default_winners:
-            cand_to_test.append(cand)
-    
-    return default_winners,cand_to_test
+def buildPossibleWorld(precompute,rule,candidatesToTest,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False):
+    # Initialization
+    (upList,downList,_,m) = precompute
+    singleWinners = []
+    surePW = []
+    possiblePW = []
+    countWorld = 0
     
     
-def construct_possible_world(precompute,rule,cand_to_test,shuffle=1,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False):
-    (U,D,lup,m) = precompute
-    alone_winners = []
-    sure_PW = []
-    possible_PW = []
-    count_world = 0
-    for candidate in cand_to_test:
+    for candidate in candidatesToTest:
+        # Test a candidate
         if verbose:
             print("Testing "+str(candidate))
+            
+        # verified is False until we find a world in which c is a winner
         verified = False
+        
+        # We try "shuffle" different shuffling of the population
         for i in range(shuffle):
+            
+            # We initialize the list of dangerous candidate with the empty list
             danger = []
-            count_tries = 0
+            countTries = 0
+            
             while (verified == False):
-                count_world += 1
-                found_instance,winner = max_rank_approx(U,D,m,candidate,rule,danger=danger,verbose=verbose,blocked=blocked)
-                if found_instance:
+                
+                # Build a new world
+                countWorld += 1
+                isAWinner,winner = __maxRankApprox(upList,downList,m,candidate,rule,danger=danger,verbose=verbose,blocked=blocked)
+                
+                # If c is a winner, then ok
+                if isAWinner:
                     if verbose:
                         print("Is a Possible winner!")
                     verified = True
-                    if maxdiff and winner == 1:
-                        alone_winners.append(candidate)
+                    
+                    # If it is a winner alone, then remember it
+                    if maxDiff and winner == 1:
+                        singleWinners.append(candidate)
+                    
+                    # Stop
                     break
                 else:
+                    # If c is not a winner, but the winner was already considered dangerous, then
+                    # stop trying to find a possible world
                     if winner in danger:
                         break 
                     else:
+                        # Otherwise, add this candidate to the list of dangerous candidate and try
+                        # again (if there are tries remaining)
                         danger.append(winner)
-                        count_tries += 1
-                        if count_tries == max_tries:
+                        countTries += 1
+                        if countTries == maxTries:
                             break
+            # If c is a winner stop
             if verified:
                 break
+        
+        # If c is a PW, add it to the list surePW and otherwise possiblePW
         if verified:
-            if list_q == []:
-                sure_PW.append(candidate)
+            if listQ == []:
+                surePW.append(candidate)
             else:
                 return True,[]
         else:
-            possible_PW.append(candidate)
-    return sure_PW,possible_PW,count_world
+            possiblePW.append(candidate)
+    
+    if maxDiff:
+        return surePW,possiblePW,singleWinners
+    else:
+        return surePW,possiblePW,countWorld
 
 
     
-def pw_pruning(population,m,rule,type=0,verbose=False,max_competition=10):
-    if type == 2:
-        kapp = int(np.sum(rule))
-    M = nw.precompute_score(rule,m)
-    lup = [0 for i in range(m)]
-    U = []
-    D = []
-    total_score = np.sum(rule)*len(population)
-    maximum_score = np.max(rule)*len(population)
+def pruningPW(population,m,rule,kapproval=False,verbose=False,maxCompetition=10):
+    n = len(population)
+    # Is it k-approval rule
+    if kapproval:
+        kindex = int(np.sum(rule))
+    
+    # Are we using preprocessing
+    if m*m > n:
+        optimPreprocessing = False
+        M = []
+    else:
+        optimPreprocessing = True
+        M = nw.precomputeScore(rule,m)
+        
+    # Compute Up and Down
+    maxScore = [0 for i in range(m)]
+    upList = []
     for i in range(len(population)):
-        P = [[] for i in range(m)]
-        C = [[] for i in range(m)]
+        # Compute parents, children
+        parents = [[] for i in range(m)]
+        children = [[] for i in range(m)]
         for (a,b) in population[i]:
-            P[b].append(a)
-            C[a].append(b)
+            parents[b].append(a)
+            children[a].append(b)
+        
+        # Compute roots
         roots = []
         for j in range(m):
-            if len(P[j]) == 0:
+            if len(parents[j]) == 0:
                 roots.append(j)
-        U_i = nw.s1_psr_O(C,P,roots,m,lup,rule)
-        U.append(U_i)
-        D_i = [[] for i in range(m)]
-        for elem_down in range(m):
-            for elem_up in U_i[elem_down]:
-                D_i[elem_up].append(elem_down)
-        D.append(D_i)
-    arglup = np.argsort(lup)
-    possible_winners = []
-    default_winners = []
+                
+        # Compute up
+        upList_i = nw.__upGeneral(children,parents,roots,m,maxScore,rule)
+        upList.append(upList_i)
+        
+    # Compute down
+    downList = [[] for i in range(m)]
+    for i in range(len(upList)):
+        upList_i = upList[i]
+        for j_1 in range(m):
+            downList[j_1].append([])
+        for j_1 in range(m):
+            for j_2 in upList_i[j_1]:
+                downList[j_2][i].append(j_1)
+    argsortMaxScore = np.argsort(maxScore)
+    
+    # Search for PW
+    totalScore = np.sum(rule)*len(population)
+    maximumScore = np.max(rule)*len(population)
+    
+    possibleWinners = []
+    defaultWinners = []
+    
+    # Test every candidate
     for i in range(m):
-        matrix_score = np.ones(m)*np.inf
-        w = arglup[i]
-        max_w = maximum_score-lup[w]
-        if max_w < (total_score-max_w)/(m-1): 
+        candidate = argsortMaxScore[i]
+        bestScoreCand = maximumScore-maxScore[candidate]
+        # Trivial case : best score too low
+        if bestScoreCand < (totalScore-bestScoreCand)/(m-1): 
             if verbose:
-                print(str(w)+" : Default Loser")
-        elif max_w > (total_score)/2:
+                print(str(candidate)+" : Default Loser")
+        
+        # Trivial case : best score high enough
+        elif bestScoreCand > (totalScore)/2:
             if verbose:
-                print(str(w)+" : Default Winner")
-            default_winners.append(w)
-            possible_winners.append(w)
-        elif max_w == maximum_score-lup[arglup[0]]:
+                print(str(candidate)+" : Default Winner")
+            defaultWinners.append(candidate)
+            possibleWinners.append(candidate)
+        
+        # Trivial case : highest best score
+        elif bestScoreCand == maximumScore-maxScore[argsortMaxScore[0]]:
             if verbose:
-                print(str(w)+" : Default Winner")
-            default_winners.append(w)
-            possible_winners.append(w)
+                print(str(candidate)+" : Default Winner")
+            defaultWinners.append(candidate)
+            possibleWinners.append(candidate)
+            
+        # Hard case
         else:
-            is_a_PW = True
-            count_compet = 0
-            for c in possible_winners:
-                if count_compet == max_competition:
+            isPW = True
+            
+            # Step 1 : Prune candidates which are not PW with NW algo
+            countCompetition = 0
+            scoreDiff = np.ones(m)*np.inf
+            
+            for opponent in possibleWinners:
+                # Stop if we've reach the maximum number of competition
+                if countCompetition == maxCompetition:
                     break
                 else:
-                    count_compet += 1
-                score_w,score_c = nw.s3_psr_O(rule,M,c,w,U,D,m)
-                matrix_score[c] = score_w-score_c
+                    countCompetition += 1
+                
+                # Note that opponent and candidate tested are inverted because we want to find PW not NW
+                scoreCandidate,scoreOpponent = nw.__competitionPositionalScoringRuleGeneral(rule,M,opponent,candidate,upList,downList[opponent],m,optimPreprocessing)
+                scoreDiff[opponent] = scoreCandidate-scoreOpponent
+                
                 if verbose:
-                    print("Test "+str(c)+" ("+str(score_c)+") against "+str(w)+" ("+str(score_w)+")")
-                if score_w < score_c:
-                    is_a_PW = False
+                    print("Test "+str(opponent)+" ("+str(scoreOpponent)+") against "+str(candidate)+" ("+str(scoreCandidate)+")")
+                
+                # If the opponent is better, then the candidate is not a PW
+                if scoreCandidate < scoreOpponent:
+                    isPW = False
                     break
-            if is_a_PW:
-                cont = True
-                if len(possible_winners) > 1 and type==2:
-                    arg_opponents = np.argsort(matrix_score)
-                    c_list = list(arg_opponents[:2])
-                    c2 = c_list[1]
-                    j = 2
-                    while matrix_score[arg_opponents[j]] == matrix_score[c2]:
-                        c_list.append(arg_opponents[j])
-                        j += 1
-                    for i_c_1 in range(len(c_list)):
-                        for i_c_2 in range(i_c_1+1,len(c_list)):
-                            c1 = c_list[i_c_1]
-                            c2 = c_list[i_c_2]
-                            score_to_combl = matrix_score[c1]+matrix_score[c2]
-                            score_combl = s3_kapp_O_level_2(kapp,[c1,c2],w,U,D,m)
-                            if verbose:
-                                print(str(w)+" vs "+" : "+str(c1)+","+str(c2)+" --> ("+str(score_combl)+"/"+str(score_to_combl)+")")
-                            if score_combl > score_to_combl:
-                                cont = False
-                if cont:
-                    if len(default_winners) == 1:
-                        default_winners.append(w)
-                    possible_winners.append(w)
-                    
-    cand_to_test = []
-    for cand in possible_winners:
-        if cand not in default_winners:
-            cand_to_test.append(cand)
-    
-    return default_winners,cand_to_test,(U,D,lup,m)
-    
             
-def approx(population,m,rule,shuffle=1,type=0,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_competition=1000,retnum=False):
-    default_winners,cand_to_test,precompute = pw_pruning(population,m,rule,type,verbose,max_competition)
+            # Step 2 : for k-approval, try NW algorithm with multiple opponents at the same time
+            if len(possibleWinners) > 1 and kapproval and isPW:
+                argsortOpponents = np.argsort(scoreDiff)
+                
+                # get the two most dangerous candidate and all candidate with the 
+                # same score difference than the second most dangerous candidate
+                opponentList = list(argsortOpponents[:2])
+                opponent2 = opponentList[1]
+                j = 2
+                while scoreDiff[argsortOpponents[j]] == scoreDiff[opponent2]:
+                    opponentList.append(argsortOpponents[j])
+                    j += 1
+                
+                # Do a competition between the candidate being tested and
+                # 2 opponent at the same time
+                for opponent_i1 in range(len(opponentList)):
+                    for opponent_i2 in range(opponent_i1+1,len(opponentList)):
+                        opponent_1 = opponentList[opponent_i1]
+                        opponent_2 = opponentList[opponent_i2]
+                        
+                        pointsToFill = scoreDiff[opponent_1]+scoreDiff[opponent_2]
+                        pointsFilled = __competitionKapp1v2(kindex,[opponent_1,opponent_2],candidate,upList,downList,m)
+                        
+                        if verbose:
+                            print(str(candidate)+" vs "+" : "+str(opponent_1)+","+str(opponent_2)+" --> ("+str(pointsFilled)+"/"+str(pointsToFill)+")")
+                        
+                        if pointsFilled > pointsToFill:
+                            isPW = False
+    
+            if isPW:
+                # There is at least 2 default winners
+                if len(defaultWinners) == 1:
+                    defaultWinners.append(candidate)
+                possibleWinners.append(candidate)
+    
+    # We want to test every candidate which is not a default winner.
+    candidatesToTest = []
+    for cand in possibleWinners:
+        if cand not in defaultWinners:
+            candidatesToTest.append(cand)
+    
+    return defaultWinners,candidatesToTest,(upList,downList,maxScore,m)
+    
+ 
+# Global algorithm for the approximation
+# kapproval : is the rule a k-approval ?
+# shuffle : number of shuffling we are trying
+# maxTries : number of Tries for each shuffling (i.e. number of dangerous opponent)
+# listQ : if not empty, we want to know if an element of the list is a PW. return True, [] if yes and False, [..] otherwise
+# blocked : candidates which cannot be co winners with candidates in listQ
+# maxDiff : 
+# maxCompetition : maximum number of competition for each candidate in step 1 (pruning)
+# reutrnNumber : return only the number of PW found (or not) at each step
+
+def approx(population,m,rule,kapproval=False,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
+    # Step 1 : pruning
+    defaultWinners,candidatesToTest,precompute = pruningPW(population,m,rule,kapproval,verbose,maxCompetition)
     if verbose:
-        print("step1:",default_winners,"/",cand_to_test)
-    step1 = m - len(cand_to_test)
-    if list_q == []:
-        if maxdiff:
-            sure_PW = []
-            cand_to_test = default_winners+cand_to_test
+        print("step 1:",defaultWinners,"/",candidatesToTest)
+    step1 = m - len(candidatesToTest)
+    
+    # Determine which candidate we will test
+    # listQ != [] for possible queries
+    if listQ == []:
+        if maxDiff:
+            surePW = []
+            candidatesToTest = defaultWinners+candidatesToTest
     else:
-        sure_PW = []
-        cand_to_test = []
-        for cand_list in list_q:
-            if cand_list in possible_winners:
-                cand_to_test.append(cand_list)
+        surePW = []
+        candidatesToTestOld = candidatesToTest.copy()
+        candidatesToTest = []
+        for candidate in listQ:
+            if candidate in candidatesToTestOld:
+                candidatesToTest.append(candidate)
         
-    winners,possible_PW,count_world = construct_possible_world(precompute,rule,cand_to_test,shuffle,verbose,max_tries,list_q,blocked,maxdiff)
+    # Step 2 : build a possible world
+    winners,possiblePW,usefulInfo= buildPossibleWorld(precompute,rule,candidatesToTest,shuffle,verbose,maxTries,listQ,blocked,maxDiff)
     if verbose:
-        print("step2:",winners,"/",possible_PW)
-    step2 = m-step1-len(possible_PW)
-    step3 = len(possible_PW)
-    if list_q == []:
-        if retnum:
+        print("step2:",winners,"/",possiblePW)
+    step2 = m-step1-len(possiblePW)
+    step3 = len(possiblePW)
+    
+    # Return all the PW
+    if listQ == []:
+        if returnNumber:
             return step1,step2,step3
-        elif maxdiff:
-            return winners+possible_PW+default_winners,alone_winners
+        elif maxDiff:
+            # return all possible PW and list of possible single winners (with not cowinners)
+            return winners+possiblePW+defaultWinners,usefulInfo
         else:
-            return winners+default_winners,possible_PW,count_world
+            # return all winners for sure, possible PW (which need to be tested) and number of world visited
+            return winners+defaultWinners,possiblePW,usefulInfo
     else:
-        return False,possible_PW
+        return False,possiblePW
             
 
-def approx_borda(population,m,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000,retnum=False):
-    return approx(population,m,[m-1-i for i in range(m)],type=1,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet,retnum=retnum)
+# Specific algorithm for borda and kapproval
+def approxBorda(population,m,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
+    rule = [m-1-i for i in range(m)]
+    return approx(population,m,rule,False,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber)
     
-def approx_kapproval(population,m,k,shuffle=1,heuristic=0,verbose=False,max_tries=10,list_q=[],blocked=[],maxdiff=False,max_compet=1000,retnum=False):
-    return approx(population,m,[1]*k+[0]*(m-k),type=2,heuristic=heuristic,shuffle=shuffle,verbose=verbose,max_tries=max_tries,list_q=list_q,blocked=blocked,maxdiff=maxdiff,max_competition=max_compet,retnum=retnum)
+def approxKapproval(population,m,k,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
+    rule =[1]*k+[0]*(m-k)
+    return approx(population,m,rule,True,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber)
     
     
-## Winner set Plurality
+## Winner set for Plurality
+# A set of candidate is a winner set if there is an instance in which they all win together (with the same score)
 
-
-
-def list_of_first_set(population,m):
-    n = len(population)
-    matrix_rank = []
-    for i in range(n):
-        roots = [1]*m
-        v = population[i]
-        for x in v:
-            (a,b) =x
-            if (roots[b]==1):
-                roots[b] = 0
-        matrix_rank.append(roots)
-    return matrix_rank
-
-def aggregate_set(matrix_rank,m):
-    dico = dict()
-    roots_list = []
-    roots_count = []
-    i = 0
-    for roots in matrix_rank:
-        if str(roots) in dico.keys():
-            roots_count[dico[str(roots)]] += 1
-        else:
-            roots_count.append(1)
-            roots_list.append(roots)
-            dico[str(roots)] = i
-            i+=1
-    return roots_list,roots_count
-        
-def score_set(dico,roots_list,roots_count,m,set_cand,n_voters):
-    cstr = str(sorted(set_cand))
-    if cstr in dico.keys():
-        score = dico[cstr]
+# The following function compute the maximum score of a set of candidate if it wins together
+def __getMaxScoreSet(dicoScore,rootsList,rootsCount,m,candidateSet,n_voters):
+    strCand = str(sorted(candidateSet))
+    
+    # If we've already seen this set, strop
+    if strCand in dicoScore.keys():
+        score = dicoScore[strCand]
         return score
-    lenc = len(set_cand)
-    if lenc == 1:
-        dico[cstr] = n_voters
+        
+    # If there is one candidate, we returns the number of voters who vote for it
+    nbCandidate = len(candidateSet)
+    if nbCandidate == 1:
+        dicoScore[strCand] = n_voters
         return n_voters
+     
     else:
-        for i in range(lenc):
-            cand_i = set_cand[i]
-            roots_list_i = []
-            roots_count_i = []
+        # Otherwise, for every candidate in the set :
+        for i in range(nbCandidate):
+            # Step 1 : Compute the rootsList of voters who can vote for i but
+            # who can also vote for another candidate in the set
+            cand_i = candidateSet[i]
+            rootsList_i = []
+            rootsCount_i = []
             n_voters_i = 0
-            for j in range(len(roots_list)):
-                ok = True
+            for j in range(len(rootsList)):
+                canChangeVote = False
                 k = 0
-                while k < lenc and ok:
-                    if set_cand[k] != cand_i and roots_list[j][set_cand[k]] == 1:
-                        ok = False 
+                while k < nbCandidate and not(canChangeVote):
+                    if candidateSet[k] != cand_i and rootsList[j][candidateSet[k]] == 1:
+                        canChangeVote = True 
                     k += 1
-                if not(ok):
-                    n_voters_i += roots_count[j]
-                    roots_list_i.append(roots_list[j])
-                    roots_count_i.append(roots_count[j])
-            set_i = set_cand.copy()
-            set_i.pop(i)
-            comp_n_voters_i = n_voters - n_voters_i
-            score_set_i = score_set(dico,roots_list_i,roots_count_i,m,set_i,n_voters_i)
-            if comp_n_voters_i >= score_set_i:#*(lenc-1):
-                dico[cstr] = score_set_i
-                return score_set_i
-            elif comp_n_voters_i + (n_voters_i-score_set_i*(lenc-1)) >= score_set_i:
-                g = mf.GraphInt()
-                g.add_nodes(len(roots_count)+lenc)
-                for j in range(len(roots_count)):
-                    g.add_tedge(j,roots_count[j],0)
-                    for k in range(lenc):
-                        if roots_list[j][set_cand[k]] == 1:
-                            g.add_edge(j,len(roots_count)+k,roots_count[j],0)
-                for k in range(lenc):
-                    g.add_tedge(len(roots_count)+k,0,score_set_i)
-                maxflow = g.maxflow()
-                if maxflow == score_set_i*lenc:
-                    dico[cstr] = score_set_i
-                    return score_set_i
-        dico[cstr] = n_voters//lenc
-        return n_voters//lenc
-
-def build_matrix_set(g,score,roots_list,roots_count,m):
-    g.add_nodes(len(roots_count)+m)
-    for i in range(len(roots_count)):
-        g.add_tedge(i,roots_count[i],0)
-        for j in range(m):
-            if roots_list[i][j] == 1:
-                g.add_edge(i,len(roots_count)+j,roots_count[i],0)
-    for j in range(m):
-        g.add_tedge(len(roots_count)+j,0,score)
+                if canChangeVote:
+                    n_voters_i += rootsCount[j]
+                    rootsList_i.append(rootsList[j])
+                    rootsCount_i.append(rootsCount[j])
+            complem_n_voters_i = n_voters - n_voters_i
             
-    
+            # We remove the ith candidate of the set and compute recursively the best score
+            set_i = candidateSet.copy()
+            set_i.pop(i)
+            __getMaxScoreSet_i = __getMaxScoreSet(dicoScore,rootsList_i,rootsCount_i,m,set_i,n_voters_i)
+            
+            # If min Score(i) >= maxscore(set-i) then we need to lower the score of i and
+            # we know what is the best score
+            if complem_n_voters_i >= __getMaxScoreSet_i:
+                dicoScore[strCand] = __getMaxScoreSet_i
+                return __getMaxScoreSet_i
+            
+            # If the score of i is not sufficient but there might be remaining candidates (the remaining
+            # part of the division), we can still obtain mascore(set-i) and to check that we use
+            # a graph
+            elif complem_n_voters_i + (n_voters_i-__getMaxScoreSet_i*(nbCandidate-1)) >= __getMaxScoreSet_i:
+                g = mf.GraphInt()
+                
+                # one node for each voters and each candidate in the set
+                g.add_nodes(len(rootsCount)+nbCandidate)
+                
+                # one edge between a candidate and a voter who can vote for it
+                for j in range(len(rootsCount)):
+                    g.add_tedge(j,rootsCount[j],0)
+                    for k in range(nbCandidate):
+                        if rootsList[j][candidateSet[k]] == 1:
+                            g.add_edge(j,len(rootsCount)+k,rootsCount[j],0)
+                            
+                # one edge between each candidate and the target with weight maxscore(set-i)
+                for k in range(nbCandidate):
+                    g.add_tedge(len(rootsCount)+k,0,__getMaxScoreSet_i)
+                
+                # If every candidate obtain at least maxscore(set-i), then it is the best score for sure
+                maxflow = g.maxflow()
+                if maxflow == __getMaxScoreSet_i*nbCandidate:
+                    dicoScore[strCand] = __getMaxScoreSet_i
+                    return __getMaxScoreSet_i
+        
+        # If there is no candidate which verify one of the two property above, we can prove that the maximum score is
+        # n_voters//nb_candidate (for each candidate)
+        dicoScore[strCand] = n_voters//nbCandidate
+        return n_voters//nbCandidate
 
-def possibility_set(dico,roots_list,roots_count,m,set_cand,n_total):
+# This function build a graph such that the maximum score of every candidate is "maxscore(set)"
+def __buildGraphPluralitySet(g,score,rootsList,rootsCount,m):
+    g.add_nodes(len(rootsCount)+m)
+    for i in range(len(rootsCount)):
+        g.add_tedge(i,rootsCount[i],0)
+        for j in range(m):
+            if rootsList[i][j] == 1:
+                g.add_edge(i,len(rootsCount)+j,rootsCount[i],0)
+    for j in range(m):
+        g.add_tedge(len(rootsCount)+j,0,score)
+            
+
+
+def setPluralityPW(dicoScore,rootsList,rootsCount,m,candidateSet,n_total,verbose=False):
+    # Compute the number of voter with favorite candidate in the set
     n_set = 0
-    for i in range(len(roots_list)):
+    for i in range(len(rootsList)):
         ok = False
-        for j in set_cand:
-            if roots_list[i][j] == 1:
+        for j in candidateSet:
+            if rootsList[i][j] == 1:
                 ok = True
                 break
         if ok:
-            n_set += roots_count[i]
-    score = score_set(dico,roots_list,roots_count,m,set_cand,n_set)
+            n_set += rootsCount[i]
+            
+    # Compute the maximum score of the set
+    if verbose:
+        print("Compute maximum score...")
+    score = __getMaxScoreSet(dicoScore,rootsList,rootsCount,m,candidateSet,n_set)
+    if verbose:
+        print("Maximum score : ",score)
+    # Obvious loser : the maximum score is lower than nbVoters/nbCandidates
     if score < n_total/m:
-        return False
-    g = mf.GraphInt()
-    maxwanted = build_matrix_set(g,score,roots_list,roots_count,m)
-    maxflow = g.maxflow()
-    if maxflow == n_total:
-        return True
-    else:
+        if verbose:
+            print("Obvious loser (",score,"/",n_total//m,")")
         return False
     
-def plurality_set(population,m,set_cand):
-    dico =dict()
+    # Otherwise we build a graph and check if there is an instance in which every candidate
+    # obtain a score < maxscore(set)
+    g = mf.GraphInt()
+    maxwanted = __buildGraphPluralitySet(g,score,rootsList,rootsCount,m)
+    maxflow = g.maxflow()
+    if maxflow == n_total:
+        if verbose:
+            print("Winners !")
+        return True
+    else:
+        if verbose:
+            print("Losers (",maxflow,"/",n_total,")")
+        return False
+    
+def plurality_set(population,m,candidateSet,verbose=False):
     n_total = len(population)
-    roots = list_of_first_set(population,m)
-    roots_list,roots_count = aggregate_set(roots,m)
-    return possibility_set(dico,roots_list,roots_count,m,set_cand,n_total)
+    
+    # get roots
+    roots = getRoots(population,m)
+    rootsList,rootsCount = __aggregatePlurality(roots,m)
+    
+    # compute if PW
+    dicoScore =dict()
+    return setPluralityPW(dicoScore,rootsList,rootsCount,m,candidateSet,n_total,verbose)
     
 ## Winner set Veto
 
 
 
-def list_of_last_set(population,m):
-    n = len(population)
-    matrix_rank = []
-    for i in range(n):
-        leaves = [1]*m
-        v = population[i]
-        for x in v:
-            (a,b) =x
-            if (leaves[a]==1):
-                leaves[a] = 0
-        matrix_rank.append(leaves)
-    return matrix_rank
 
-def aggregate_set_veto(matrix_rank,m):
-    dico = dict()
-    leaves_list = []
-    leaves_count = []
-    i = 0
-    for leaves in matrix_rank:
-        if str(leaves) in dico.keys():
-            leaves_count[dico[str(leaves)]] += 1
-        else:
-            leaves_count.append(1)
-            leaves_list.append(leaves)
-            dico[str(leaves)] = i
-            i+=1
-    return leaves_list,leaves_count
         
-def zero_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_voters):
-    cstr = str(sorted(set_cand))
-    if cstr in dico.keys():
-        zero = dico[cstr]
+def __getMinVetoSet(dicoZero,leavesList,leavesCount,m,candidateSet,n_voters):
+    strCand = str(sorted(candidateSet))
+    
+    # If we've already computed this value
+    if strCand in dicoZero.keys():
+        zero = dicoZero[strCand]
         return zero
-    lenc = len(set_cand)
-    if lenc == 1:
-        dico[cstr] = n_voters
-       # print("1",set_cand,n_voters)
+    nbCandidates = len(candidateSet)
+    # If there is only one candidate
+    if nbCandidates == 1:
+        dicoZero[strCand] = n_voters
         return n_voters
     else:
-        for i in range(lenc):
-            cand_i = set_cand[i]
-            leaves_list_i = []
-            leaves_count_i = []
+        # Otherwise, try this for every candidate in the set
+        for i in range(nbCandidates):
+            # Step 1 : Look at the voters who can veto i (therefore, they can veto
+            # only other candidate of the set)
+            cand_i = candidateSet[i]
+            leavesList_i = []
+            leavesCount_i = []
             n_voters_i = 0
-            for j in range(len(leaves_list)):
-                if leaves_list[j][cand_i] == 0:
-                    n_voters_i += leaves_count[j]
-                    leaves_list_i.append(leaves_list[j])
-                    leaves_count_i.append(leaves_count[j])
-            set_i = set_cand.copy()
+            for j in range(len(leavesList)):
+                if leavesList[j][cand_i] == 0:
+                    n_voters_i += leavesCount[j]
+                    leavesList_i.append(leavesList[j])
+                    leavesCount_i.append(leavesCount[j])
+                    
+            # Step 2 : Compute recursively the number of veto of the set without i
+            set_i = candidateSet.copy()
             set_i.pop(i)
-            comp_n_voters_i = n_voters - n_voters_i
-            zero_set_i = zero_set_veto(dico,leaves_list_i,leaves_count_i,m,set_i,n_voters_i)
-            if comp_n_voters_i <= zero_set_i:
-                dico[cstr] = zero_set_i
-               # print("<",set_cand,zero_set_i)
+            complem_n_voters_i = n_voters - n_voters_i
+            zero_set_i = __getMinVetoSet(dicoZero,leavesList_i,leavesCount_i,m,set_i,n_voters_i)
+            
+            # If it is
+            if complem_n_voters_i <= zero_set_i:
+                dicoZero[strCand] = zero_set_i
                 return zero_set_i
-        zeros = np.ceil(n_voters/lenc)
-        dico[cstr] = zeros
-       # print("=",set_cand,zeros)
+        
+        # If none of the above worked, then the min number of veto is nbVoters/nbCandidates
+        zeros = np.ceil(n_voters/nbCandidates)
+        dicoZero[strCand] = zeros
         return zeros
-
-def build_matrix_set_veto(g,zeros,leaves_list,leaves_count,m):
-    g.add_nodes(len(leaves_count)+m)
-    for i in range(len(leaves_count)):
-        g.add_tedge(i,leaves_count[i],0)
+        
+# This function build a graph for PW set determination and Veto's rule. Every candidate
+# must have at least "zeros(set)" vetos
+def __buildGraphVetoSet(g,zeros,leavesList,leavesCount,m):
+    g.add_nodes(len(leavesCount)+m)
+    for i in range(len(leavesCount)):
+        g.add_tedge(i,leavesCount[i],0)
         for j in range(m):
-            if leaves_list[i][j] == 1:
-                g.add_edge(i,len(leaves_count)+j,leaves_count[i],0)
+            if leavesList[i][j] == 1:
+                g.add_edge(i,len(leavesCount)+j,leavesCount[i],0)
     for j in range(m):
-        g.add_tedge(len(leaves_count)+j,0,zeros)
+        g.add_tedge(len(leavesCount)+j,0,zeros)
             
     
 
-def possibility_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_total):
+def setVetoPW(dicoZero,leavesList,leavesCount,m,candidateSet,n_total,verbose=False):
     n_set = 0
-    compl = [x for x in range(m) if x not in set_cand]
-    leaves_list_zero = []
-    leaves_count_zero = []
-    for i in range(len(leaves_list)):
-        ok = False
-        for j in compl:
-            if leaves_list[i][j] == 1:
-                ok = True
+    complementary = [x for x in range(m) if x not in candidateSet]
+    leavesList_zero = []
+    leavesCount_zero = []
+    for i in range(len(leavesList)):
+        canBeOut = False
+        # We check if the voter can veto a candidate outside the set
+        for j in complementary:
+            if leavesList[i][j] == 1:
+                canBeOut = True
                 break
-        if not(ok):
-            n_set += leaves_count[i]
-            leaves_list_zero.append(leaves_list[i])
-            leaves_count_zero.append(leaves_count[i])
-    zeros = zero_set_veto(dico,leaves_list_zero,leaves_count_zero,m,set_cand,n_set)
+        # If not, then we add it to the list of voters who veto the set
+        if not(canBeOut):
+            n_set += leavesCount[i]
+            leavesList_zero.append(leavesList[i])
+            leavesCount_zero.append(leavesCount[i])
+            
+    if verbose:
+        print("Computing min zeros...")
+    # We compute the minimum number of vetos for our set
+    zeros = __getMinVetoSet(dicoZero,leavesList_zero,leavesCount_zero,m,candidateSet,n_set)
+    if verbose:
+        print("Min zeros : ",zeros)
+        
+    # trivial case : too many vetos
     if zeros > n_total/m:
+        if verbose:
+            print("Obvious losers (",zeros,"/",n_total//m,")")
         return False
+    
+    # hard case : use maxflow algorithm
     g = mf.GraphInt()
-    maxwanted = build_matrix_set_veto(g,zeros,leaves_list,leaves_count,m)
+    maxwanted = __buildGraphVetoSet(g,zeros,leavesList,leavesCount,m)
     maxflow = g.maxflow()
     if maxflow == zeros*m:
+        if verbose:
+            print("Winners !")
         return True
     else:
+        if verbose:
+            print("Losers (",maxflow,"/",zeros*m,")")
         return False
     
-def veto_set(population,m,set_cand):
-    dico =dict()
+# general algorithm for PW set determination with Veto
+def veto_set(population,m,candidateSet,verbose=False):
     n_total = len(population)
-    leaves = list_of_last_set(population,m)
-    leaves_list,leaves_count = aggregate_set_veto(leaves,m)
-    return possibility_set_veto(dico,leaves_list,leaves_count,m,set_cand,n_total)
-     
-##
-
-
-
-
     
+    # Compute leaves
+    leaves = getLeaves(population,m)
+    leavesList,leavesCount = __aggregateVeto(leaves,m)
     
+    # Compute if PW
+    dicoZero =dict()
+    return setVetoPW(dicoZero,leavesList,leavesCount,m,candidateSet,n_total,verbose)
+     
+
+### Exact solution with Gurobi
+
+def createModel(n,m,population,rule):
+    # Initialize empty model
+    model = Model("election_pw")
+    model.setParam("Seed", 42)
+    model.params.presolve = 0
     
-
-def createModel(n,m,partial_profs,rule):
-  #initialize empty model
-  model = Model("election_pw")
-  model.setParam("Seed", 42)
-  model.params.presolve = 0
-  
-  start_time = time.time()
-  #Constrains - to rensure ordering 
-  if rule is 'b':
-    # Create decision variables for each x^l_{i,j}
-    x = model.addVars(n, m, m, vtype = GRB.BINARY, name = "x" )
-    var_time = time.time() - start_time
-    model.addConstrs(  1 == sum(x[l,i,p] for p in range(m)  ) for l in range(n) for i in range(m) )
-    cstr1_time = time.time() - (var_time + start_time)
-    model.addConstrs( 1 == sum(x[l, i, p] for i in range(m) )  for l in range(n) for p in range(m) )
-    cstr2_time = time.time() - (start_time + var_time + cstr1_time)
-
-    #Constrains - partial profile  
-    start = time.time() 
-    for ind,poset in enumerate(partial_profs):
-        for (a,b) in poset:
-        
-            model.addConstr( 1 <= sum(p * (x[ind, a,p] - x[ind, b,p]) for p in range(m) ) )
-    #rofile coonstraint time end
-    prtl_cstr_time = time.time() - start
-  elif rule is 'v':
-    # Create decision variables for each x^l_{i,j}
-    x = model.addVars(n, m, vtype = GRB.BINARY, name = "x" )
-    var_time = time.time() - start_time
-    model.addConstrs(m-1 == sum(x[l,i] for i in range(m)) for l in range(n))
-    cstr1_time = time.time() - (start_time + var_time)
-    #veto does not have second constraint. So this time is 0. 
-    #Added to keep return type uniform for all functions
-    start = time.time()
-    #these constraints are for ensuring prefrences are upheld, since l[1] has to be preferable
-    #and there is only 1 zero l[1] must be 1
-    for ind,poset in enumerate(partial_profs):
-        for (a,b) in poset:
-            model.addConstr(1 == x[ind, a])
-    prtl_cstr_time = time.time() - start
-    cstr2_time = 0
-  else:
-    # Create decision variables for each x^l_{i,j}
-    x = model.addVars(n, m, k, vtype = GRB.BINARY, name = "x" )
-    var_time = time.time() - start_time
-    model.addConstrs(  1 >= sum(x[l,i,p] for p in range(k)  ) for l in range(n) for i in range(m) )
-    cstr1_time = time.time() - (start_time + var_time)
-    #upholds that there is exactly one candidate in each of the first k positions
-    model.addConstrs( 1 == sum(x[l, i, p] for i in range(m) )  for l in range(n) for p in range(k) )
-    cstr2_time = time.time() - (start_time + var_time + cstr1_time)
-    start = time.time()
-    #constraint checking for possible winner (comparing num times appearing in first k positions)
-    #these constraints are for ensuring prefrences are upheld
-    for ind,poset in enumerate(partial_profs):
-        for (a,b) in poset:
-            model.addConstr(0 <= sum(x[ind, a,p] - x[ind, b,p] for p in range(k)))
-    prtl_cstr_time = time.time() - start
-  #save model file
-  model.write('model.mps')
-  return True
-  
-  
-  
-def checkPW(input):
-  (m,n,dist_cand,rule,k) = input
-  output = -1
-  pw_cstr_time = -1
-  prtl_cstr_time = -1
-  opt_time = -1
-  start = -1
-  tot_start = time.time()
-  try:
-    #Loading common constraints model
-    # lock.acquire() 
-    model = read('model.mps')
-    # lock.release()
-    x = model.getVars()
-    model.params.mipFocus = 1
-    model.params.preDepRow = 1
-    model.params.presolve = 1
-    model.params.presparsify = 1
-    if rule == 'b':
-      #reshaping variable for easy access
-      x = np.array(x).reshape((n,m,m))
-      #sum for distinguished candidate
-      winner_sum = sum(p * x[l, dist_cand ,p] for l in range(n) for p in range(m))
-      #add winner constraint for dist_cand
-      for cand in range(m):
-          if cand != dist_cand:
-              model.addConstr( sum(p * x[l, cand, p] for l in range(n)
-                               for p in range(m) ) <= winner_sum )
-      #timing winner constraints end
-      pw_cstr_time = time.time() - (start + prtl_cstr_time)
-    elif rule == 'v':
-      #reshaping array for easy access
-      x = np.array(x).reshape((n,m))
-      #starting timer for constraints and optimization
-     
-      #contraint checking for possible winner (comparing number of times it appears in first m-1 spots)
-      #sum for distinguished candidate
-      winner_sum = sum(x[l, dist_cand] for l in range(n))
-      #PW constraint
-      for cand in range(m):
-          if cand != dist_cand:
-              model.addConstr( sum(x[l, cand] for l in range(n) )<= winner_sum)
-      #timing winner constraints end
-      pw_cstr_time = time.time() - (start + prtl_cstr_time)
-    else:
-      x = np.array(x).reshape((n,m,k))
-      #timer for constraints and optimization
-     
-      #sum for distiguished candidate
-      winner_sum = sum(x[l, dist_cand ,p] for l in range(n) for p in range(k))
-      #PW constrain
-      for cand in range(m):
-          if cand != dist_cand:
-              model.addConstr( sum(x[l, cand, p] for l in range(n)
-                               for p in range(k) ) <= winner_sum)
-      #timing winner constraints end
-      pw_cstr_time = time.time() - (start+prtl_cstr_time)
-    #run model
-    model.optimize()
-    opt_time = time.time() - (start + pw_cstr_time + prtl_cstr_time)
-    #gather possible winners and certain losers
-    if model.status == GRB.Status.OPTIMAL:
-        output = 1
-    else:
-        output = 0
-  except Exception as e:
-      print("ERROR in checkPW:",e)
-      return e
-  tot_time= time.time() - tot_start
-  return (dist_cand, output, pw_cstr_time, opt_time, prtl_cstr_time, tot_time)
-  
-
-
-def PW_gurobi(partial_profs,m,rule,pwlist,process=5):
-    n = len(partial_profs)
-    pw = []
-    not_pw = []
-    output = None
-    #returned tuple from createModel functions
-    time_tup = None
-    tot_opt_time = 0
-    tot_PW_cstr_time = 0
-    tot_prtl_cstr_time = 0
-    cand_times = {}
-    #CHUNK_SIZE = int(math.floor(m/7))
-    #assigning value to k
-    if rule[:1]=='k':
+    # K-approval
+    if rule[0] == 'k':
         k = int(rule[1:])
+        # Create decision variables for each x^l_i
+        x = model.addVars(n, m, vtype = GRB.BINARY, name = "x" )
+        
+        # Constraint - k votes per voters
+        model.addConstrs(  k == sum(x[l,i] for i in range(m)) for l in range(n))
+        
+        # Contraint - Preferences pair
+        for ind,poset in enumerate(population):
+            for (a,b) in poset:
+                model.addConstr(0 <= x[ind, a] - x[ind, b])
+        
+    # Borda model
+    elif rule == 'b':
+        x = model.addVars(n, m,m, vtype = GRB.BINARY, name = "x" )
+        
+        # Contraint - i > j xor j > i
+        model.addConstrs( (x[l, i, j] + x[l, j, i] == 1) 
+                        for l in range(n) 
+                        for i in range(m) 
+                        for j in range(m) 
+                        if i!=j )
+        
+        # Contraint - if i > j and j > k then i > k
+        model.addConstrs( (x[l, i, j] + x[l, j, k] + x[l, k, i] <= 2) 
+                        for l in range(n)
+                        for i in range(m)
+                        for j in range(m)
+                        for k in range(m)
+                        if i != j and i != k and j != k)
+        
+        # Contraint - Preferences
+        for ind,poset in enumerate(population):
+            for (a,b) in poset:
+                model.addConstr(x[ind,a,b] == 1)
     else:
-        k =0
-    #creates a set of processes to simultaneously make calculations
+        # Create decision variables for each x^l_{i,j}
+        # x[l,i,p] = 1 if voters i give rank ith candidate at position m-p
+        x = model.addVars(n, m, m, vtype = GRB.BINARY, name = "x" )
+        
+
+        # Contraint - One rank per candidate and one candidate per rank
+        model.addConstrs(  1 == sum(x[l,i,p] for p in range(m)  ) for l in range(n) for i in range(m) )
+        model.addConstrs( 1 == sum(x[l, i, p] for i in range(m) )  for l in range(n) for p in range(m) )
+    
+        # Constraint - partial profile  
+        for ind,poset in enumerate(population):
+            for (a,b) in poset:
+                model.addConstr( 0 >= sum(p * (x[ind, a,p] - x[ind, b,p]) for p in range(m) ) )
+       
+
+    
+    #save model file
+    model.write('model.mps')
+    return True
+    
+  
+  
+def checkPW(inputs):
+    (m,n,candidateSet,rule,candBlocked) = inputs
+    # Initialization
+    distinguedCandidate = candidateSet[0]
+    print("testing :",distinguedCandidate)
+    
+    try:
+        #Loading common constraints model
+        model = read('model.mps')
+        model.params.mipFocus = 1
+        model.params.preDepRow = 1
+        model.params.presolve = 1
+        model.params.presparsify = 1
+        
+        x = model.getVars()
+        
+        # K-approval
+        if rule[0] == 'k':
+            # Reshaping variables for easy access
+            x = np.array(x).reshape((n,m))
+            
+            # Score of distinguished candidate 
+            winner_sum = sum(x[l, distinguedCandidate] for l in range(n))
+            
+            # Constraint - PW constraint
+            for cand in range(m):
+                if cand != distinguedCandidate:
+                    if cand in candidateSet:
+                        model.addConstr( sum(x[l, cand] for l in range(n) ) == winner_sum)
+                    else:
+                        if cand in candBlocked:
+                            maxScore = winner_sum -1
+                        else:
+                            maxScore = winner_sum
+                        model.addConstr( sum(x[l, cand] for l in range(n) )<= maxScore)
+                    
+        # Borda rule
+        if rule == 'b':
+            # Reshaping variables for easy access
+            x = np.array(x).reshape((n,m,m))
+            
+            # Score of distinguished candidate 
+            winner_sum = sum(x[l, distinguedCandidate ,j] for l in range(n) for j in range(m) if j != distinguedCandidate)
+            
+            # Constraint - PW constraint
+            for cand in range(m):
+                if cand != distinguedCandidate:
+                    if cand in candidateSet:
+                        model.addConstr(sum(x[l, cand ,j] for l in range(n) for j in range(m) if j != cand) == winner_sum)
+                    else:
+                        if cand in candBlocked:
+                            maxScore = winner_sum -1
+                        else:
+                            maxScore = winner_sum
+                        model.addConstr(sum(x[l, cand ,j] for l in range(n) for j in range(m) if j != cand) <= maxScore)
+        
+        # Other rules
+        else:
+            # Reshaping variables for easy access
+            x = np.array(x).reshape((n,m,m))
+            
+            # Score of distinguished candidate 
+            winner_sum = sum(rule[p]*x[l, distinguedCandidate ,p] for p in range(m) for l in range(n))
+            
+            # Constraint - PW constraint
+            for cand in range(m):
+                if cand != distinguedCandidate:
+                    if cand in candidateSet:
+                        model.addConstr(sum(rule[p]*x[l, cand ,p] for p in range(m) for l in range(n)) == winner_sum)
+                    else:
+                        if cand in candBlocked:
+                            maxScore = winner_sum -1
+                        else:
+                            maxScore = winner_sum
+                        model.addConstr(sum(rule[p]*x[l, cand ,p] for p in range(m) for l in range(n)) <= maxScore)
+
+        # Run model
+        model.optimize()
+        
+        # Check if PW
+        if model.status == GRB.Status.OPTIMAL:
+            output = 1
+        else:
+            output = 0
+            
+    except Exception as e:
+        print("ERROR in checkPW:",e)
+        return e
+        
+    return (distinguedCandidate, output)
+    
+
+
+def PWgurobi(population,m,rule,pwlist,process=5,verbose=True):
+    n = len(population)
+    PWlist = []
+    tot_start = time.time()
+    # Creates a set of processes to simultaneously make calculations
     pool = Pool(processes = process)
-    #generates the common constraints
-    time_tup = createModel(n,m,partial_profs,rule)
-    input_gurobi = [(m,n,cand,rule,k) for cand in pwlist]
-    output = pool.imap_unordered(checkPW, input_gurobi, process)
+    
+    # Generates the common constraints
+    createModel(n,m,population,rule)
+    input_gurobi = [(m,n,[cand],rule,[]) for cand in pwlist]
+    output = pool.imap(checkPW, input_gurobi)
+    while True:
+        try:
+            retVal = output.next(timeout=2000 - (time.time() - tot_start))
+            if verbose:
+                print("Result: ", retVal)
+            if retVal[1] == 1:
+                PWlist.append(retVal[0])
+        except StopIteration:
+            break
+        except multiprocessing.TimeoutError:
+            print("Timeout")
+            pool.terminate()
+            return False
     pool.close()
     pool.join()
-    for retVal in output:
-        print(retVal)
-        if not isinstance(retVal,tuple):
-            print("ERROR in main:", retVal)
-            #raise ProcessFail(filename + ": A candidate has failed with the following exception:", retVal)
-            sys.exit(1)
-        else:
-            #[dist_cand, PW ?, Time PW constr, Optimize Time, partial prof constr, candidate time]
-            tot_prtl_cstr_time += retVal[4]
-            tot_opt_time += retVal[3] 
-            tot_PW_cstr_time += retVal[2]
-            cand_times[retVal[0]] = retVal[5]
-            if retVal[1] == 1:
-                pw.append(retVal[0])
-    return pw
+    return PWlist
     
-
-def borda(P,m,verbose=False,shuffle=1,max_tries=4,max_compet=10,process=5):
-    pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
-    if pwp == []:
-        return pws
-    pwg = PW_gurobi(P,m,'b',pwp,process)
-    return pws+pwg
     
-def kapp(P,m,k,verbose=False,shuffle=1,max_tries=4,max_compet=10):
-    pws,pwp,_ = approx_borda(P,m,shuffle=shuffle,max_tries=max_tries,max_compet=max_compet,verbose=verbose)
-    if pwp == []:
-        return pws
-    pwg = PW_gurobi(P,m,'k'+str(k),pwp,process)
-    return pws+pwg
+# General algorithms for Borda, K-approval, and any positional scoring rule
+def borda(P,m,verbose=False,shuffle=1,maxTries=4,maxCompetition=10,process=5,setCand=[],listQ=[],blocked=[]):
+    if listQ == []:
+        PWsure,PWdoubt,_ = approxBorda(P,m,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if PWdoubt == []:
+            return PWsure
+        PWgur = PWgurobi(P,m,'b',PWdoubt,process,verbose)
+        return PWsure+PWgur
+    else:
+        success,PWdoubt = approxBorda(P,m,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if success:
+            return True
+        if PWdoubt == []:
+            return False
+        PWgur = PWgurobi(P,m,'b',PWdoubt,process,verbose)
+        return PWgur != []
+    
+def kapp(P,m,k,verbose=False,shuffle=1,maxTries=4,maxCompetition=10,process=5,setCand=[],listQ=[],blocked=[]):
+    if listQ == []:
+        PWsure,PWdoubt,_ = approxKapproval(P,m,k,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if PWdoubt == []:
+            return PWsure
+        PWgur = PWgurobi(P,m,'k'+str(k),PWdoubt,process,verbose)
+        return PWsure+PWgur
+    else:
+        success,PWdoubt = approxKapproval(P,m,k,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if success:
+            return True
+        if PWdoubt == []:
+            return False
+        PWgur = PWgurobi(P,m,'k'+str(k),PWdoubt,process,verbose)
+        return PWgur != []
+    
+def positionalScoringRule(P,m,rule,verbose=False,shuffle=1,maxTries=4,maxCompetition=10,process=5,setCand=[],listQ=[],blocked=[]):
+    if listQ == []:
+        PWsure,PWdoubt,_ = approx(P,m,rule,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if PWdoubt == []:
+            return PWsure
+        PWgur = PWgurobi(P,m,rule,PWdoubt,process,verbose)
+        return PWsure+PWgur
+    else:
+        success,PWdoubt = approx(P,m,rule,shuffle,verbose,maxTries,listQ,blocked,maxCompetition=maxCompetition)
+        if success:
+            return True
+        if PWdoubt == []:
+            return False
+        PWgur = PWgurobi(P,m,rule,PWdoubt,process,verbose)
+        return PWgur != []
