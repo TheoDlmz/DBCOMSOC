@@ -851,19 +851,19 @@ def pruningPW(population,m,rule,kapproval=False,verbose=False,maxCompetition=10)
         # Trivial case : best score too low
         if bestScoreCand < (totalScore-bestScoreCand)/(m-1): 
             if verbose:
-                print(str(candidate)+" : Default Loser")
+                print(str(candidate)+" : Default Loser ("+str(bestScoreCand)+")")
         
         # Trivial case : best score high enough
         elif bestScoreCand > (totalScore)/2:
             if verbose:
-                print(str(candidate)+" : Default Winner")
+                print(str(candidate)+" : Default Winner ("+str(bestScoreCand)+")")
             defaultWinners.append(candidate)
             possibleWinners.append(candidate)
         
         # Trivial case : highest best score
         elif bestScoreCand == maximumScore-maxScore[argsortMaxScore[0]]:
             if verbose:
-                print(str(candidate)+" : Default Winner")
+                print(str(candidate)+" : Default Winner ("+str(bestScoreCand)+")")
             defaultWinners.append(candidate)
             possibleWinners.append(candidate)
             
@@ -948,7 +948,7 @@ def pruningPW(population,m,rule,kapproval=False,verbose=False,maxCompetition=10)
 # maxCompetition : maximum number of competition for each candidate in step 1 (pruning)
 # reutrnNumber : return only the number of PW found (or not) at each step
 
-def approx(population,m,rule,kapproval=False,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
+def approx(population,m,rule,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False,kapproval=False):
     # Step 1 : pruning
     defaultWinners,candidatesToTest,precompute = pruningPW(population,m,rule,kapproval,verbose,maxCompetition)
     if verbose:
@@ -993,11 +993,11 @@ def approx(population,m,rule,kapproval=False,shuffle=1,verbose=False,maxTries=10
 # Specific algorithm for borda and kapproval
 def approxBorda(population,m,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
     rule = [m-1-i for i in range(m)]
-    return approx(population,m,rule,False,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber)
+    return approx(population,m,rule,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber,kapproval=False)
     
 def approxKapproval(population,m,k,shuffle=1,verbose=False,maxTries=10,listQ=[],blocked=[],maxDiff=False,maxCompetition=1000,returnNumber=False):
     rule =[1]*k+[0]*(m-k)
-    return approx(population,m,rule,True,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber)
+    return approx(population,m,rule,shuffle,verbose,maxTries,listQ,blocked,maxDiff,maxCompetition,returnNumber,kapproval=True)
     
     
 ## Winner set for Plurality
@@ -1043,18 +1043,18 @@ def __getMaxScoreSet(dicoScore,rootsList,rootsCount,m,candidateSet,n_voters):
             # We remove the ith candidate of the set and compute recursively the best score
             set_i = candidateSet.copy()
             set_i.pop(i)
-            __getMaxScoreSet_i = __getMaxScoreSet(dicoScore,rootsList_i,rootsCount_i,m,set_i,n_voters_i)
-            
+            maxScoreSet_i = __getMaxScoreSet(dicoScore,rootsList_i,rootsCount_i,m,set_i,n_voters_i)
+            maxScoreSet_i = min(maxScoreSet_i,n_voters//nbCandidate)
             # If min Score(i) >= maxscore(set-i) then we need to lower the score of i and
             # we know what is the best score
-            if complem_n_voters_i >= __getMaxScoreSet_i:
-                dicoScore[strCand] = __getMaxScoreSet_i
-                return __getMaxScoreSet_i
+            if complem_n_voters_i >= maxScoreSet_i:
+                dicoScore[strCand] = maxScoreSet_i
+                return maxScoreSet_i
             
             # If the score of i is not sufficient but there might be remaining candidates (the remaining
             # part of the division), we can still obtain mascore(set-i) and to check that we use
             # a graph
-            elif complem_n_voters_i + (n_voters_i-__getMaxScoreSet_i*(nbCandidate-1)) >= __getMaxScoreSet_i:
+            elif complem_n_voters_i + (n_voters_i-maxScoreSet_i*(nbCandidate-1)) >= maxScoreSet_i:
                 g = mf.GraphInt()
                 
                 # one node for each voters and each candidate in the set
@@ -1069,18 +1069,13 @@ def __getMaxScoreSet(dicoScore,rootsList,rootsCount,m,candidateSet,n_voters):
                             
                 # one edge between each candidate and the target with weight maxscore(set-i)
                 for k in range(nbCandidate):
-                    g.add_tedge(len(rootsCount)+k,0,__getMaxScoreSet_i)
+                    g.add_tedge(len(rootsCount)+k,0,maxScoreSet_i)
                 
                 # If every candidate obtain at least maxscore(set-i), then it is the best score for sure
                 maxflow = g.maxflow()
-                if maxflow == __getMaxScoreSet_i*nbCandidate:
-                    dicoScore[strCand] = __getMaxScoreSet_i
-                    return __getMaxScoreSet_i
-        
-        # If there is no candidate which verify one of the two property above, we can prove that the maximum score is
-        # n_voters//nb_candidate (for each candidate)
-        dicoScore[strCand] = n_voters//nbCandidate
-        return n_voters//nbCandidate
+                if maxflow == maxScoreSet_i*nbCandidate:
+                    dicoScore[strCand] = maxScoreSet_i
+                    return maxScoreSet_i
 
 # This function build a graph such that the maximum score of every candidate is "maxscore(set)"
 def __buildGraphPluralitySet(g,score,rootsList,rootsCount,m):

@@ -3,6 +3,8 @@ import numpy as np
 import random
 from random import choices
 from .winners import nw,pw
+import networkx as nx
+import matplotlib.pyplot as plt
 
 ## Tools functions
 
@@ -296,6 +298,12 @@ class Poset(object):
     def get_density(self) -> int:
         return density(self.pairs,self.m)
         
+    def plot_graph(self):
+        G=nx.DiGraph()
+        G.add_edges_from(self.pairs)
+        nx.draw_shell(G,node_size = 800, node_color="cyan", with_labels = True)
+        plt.show()
+        
 
 
 ## Class to generate mallows models
@@ -437,7 +445,10 @@ class RSM(object):
             for j in range(self.m):
                 pi_alt[i][j] = pi_alt[i][j]/Z_i
         return pi_alt
-    
+        
+    def get_rank_of_item(self, item):
+        return self.item_to_rank[item]
+        
     def get_center(self) -> List:
         return self.center
     
@@ -568,6 +579,11 @@ class RSM(object):
         
     def set_random_p(self):
         self.p = [np.random.rand() for i in range(self.m)]
+    
+    def set_exp_p(self,lambd,tau):
+        if lambd < 0 or lambd > 1 or tau < 0:
+            raise ValueError("Lambda should be between 0 and 1 and tau >= 0")
+        self.p = lambd*np.exp(-tau*np.arange(self.m))
         
     def proba_rank(self):
         M = np.zeros((self.m,self.m))
@@ -629,6 +645,8 @@ class Mallows_RSM(RSM):
             
         if phi>1 or phi < 0:
             raise ValueError("Phi must be between 0 and 1")
+        
+        self.item_to_rank = {item: rank for rank, item in enumerate(self.center)}
        
     def q_mallows(self):
         row = [0 for i in range(self.m)]

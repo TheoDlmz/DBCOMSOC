@@ -975,8 +975,8 @@ def __competitionPositionalScoringRuleMultilinear(rule,M,candTested,opponent,can
     scoreCandTested = 0
     
     for i in range(n): 
-        (orderNumberCandTested,rankCandTested) = candRankM[i][c]
-        (orderNumberOpponent,rankOpponent) = candRankM[i][w]
+        (orderNumberCandTested,rankCandTested) = candRankM[i][candTested]
+        (orderNumberOpponent,rankOpponent) = candRankM[i][opponent]
         if rankCandTested >=0 and (rankCandTested < rankOpponent) and orderNumberOpponent == orderNumberCandTested:
             # If candTested > opponent, then compute the minimal score difference between them.
             blockSize = rankOpponent-rankCandTested
